@@ -1,0 +1,4 @@
+{
+    "theme": "auto",
+    "permissions": { "allow": ["mcp__wiz__*"] }
+}

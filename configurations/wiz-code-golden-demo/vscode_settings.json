@@ -1,0 +1,9 @@
+{
+  "workbench.colorTheme": "Default Dark Modern",
+  "editor.fontSize": 14,
+  "editor.formatOnSave": true,
+  "files.autoSave": "afterDelay",
+  "wiz.environment": "demo",
+  "security.workspace.trust.enabled": false,
+  "chat.disableAIFeatures": true
+}
