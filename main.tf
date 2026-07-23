@@ -188,6 +188,8 @@ resource "google_cloud_run_v2_service" "code_server" {
   ingress     = "INGRESS_TRAFFIC_ALL"
   iap_enabled = true
 
+  deletion_protection = false
+
   template {
     service_account = google_service_account.cloud_run_sa.email
 
