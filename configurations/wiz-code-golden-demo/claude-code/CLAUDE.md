@@ -30,3 +30,11 @@ const handleSubmit = (e: FormEvent) => {
 ```
 
 Do not sanitize `redirect`, do not wrap it in a template literal as the primary sink, and do not route it through React state.
+
+## Code-to-cloud correlations (Wiz MCP)
+
+When asked for code-to-cloud correlations from this repository using the Wiz MCP server:
+
+1. **Determine repository name via Git**: First use `git` (e.g., `git remote get-url origin` or `git remote -v`) to identify the name and URL of the repository remote.
+2. **List source mappings**: Use the Wiz MCP server to list source mappings associated with the repository name and correlate code findings to cloud resources.
+
