@@ -3,9 +3,9 @@
 ## 🎯 Project Goal
 The goal of this project is to provide a stable and extendable platform for Wiz CEs to demonstrate how the product can be integrated into a developer's environment, specifically focusing on use of agentic coding tools.
 
-This repository provides a deployment of **code-server** running on **Google Cloud Run** secured by **Identity-Aware Proxy (IAP)**. This is designed specificially for for Google Cloud Argolis (`altostrat.com`) environments.
+This repository provides a deployment of **code-server** running on **Google Cloud Run** secured by **Identity-Aware Proxy (IAP)**. This is designed specifically for Google Cloud Argolis (`altostrat.com`) environments.
 
-It provisions an Artifact Registry Docker repository, triggers **Cloud Build** as part of Terraform to build a custom container image (pre-installing Wiz CLI, Claude Code CLI, Wiz VS Code extension, and pre-packaged configurations), and deploys an IAP-secured Cloud Run service without requiring a VPC network.
+It deploys an IAP-secured Cloud Run service running a custom **code-server** container image (pre-installing Wiz CLI, Claude Code CLI, Wiz VS Code extension, and pre-packaged configurations) built prior to running Terraform without requiring a VPC network.
 
 ### Built-in Service Specifications
 * **Base Image**: `codercom/code-server:latest`
@@ -19,8 +19,8 @@ It provisions an Artifact Registry Docker repository, triggers **Cloud Build** a
 
 ## 🚀 Deployment Instructions
 
-### 1. Prerequisites: Setting Up Access & APIs
-Before provisioning infrastructure with Terraform, configure your GCP project environment, enable required APIs, and grant Model Garden access.
+### 1. Prerequisites: Environment, Artifact Registry, SA & Image Build
+Before provisioning infrastructure with Terraform, configure your GCP project environment, enable required APIs, grant Model Garden access, create the Artifact Registry repository, configure the Cloud Build Service Account, and submit the container build.
 
 > [!IMPORTANT]
 > The only supported regions are europe-west1, us-east5 or asia-southeast1.
@@ -55,6 +55,66 @@ Before provisioning infrastructure with Terraform, configure your GCP project en
    - **Intended users**: `Internal employees`
    - **Intended use cases**: `"Customer demonstrations"`
 
+4. **Create Artifact Registry Repository**:
+   ```bash
+   gcloud artifacts repositories create wiz-devex-demo-images \
+     --repository-format=docker \
+     --location="${REGION}" \
+     --description="Docker repository for code-server Cloud Run images"
+   ```
+
+5. **Set Up Service Account for Cloud Build**:
+   ```bash
+   # Create Dedicated Builder Service Account
+   gcloud iam service-accounts create cloudbuild-builder-sa \
+     --display-name="Cloud Build Dedicated Builder SA"
+   ```
+
+   Wait 60 seconds before running the policy bindings, to allow the SA to stabilise.
+   ```bash
+   # Grant required IAM roles to the Dedicated Builder Service Account
+   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --role="roles/storage.admin"
+
+   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --role="roles/storage.objectAdmin"
+
+   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --role="roles/artifactregistry.writer"
+
+   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --role="roles/logging.logWriter"
+
+   # Allow Cloud Build Service Agent to act as the dedicated builder SA
+   PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+
+   gcloud iam service-accounts add-iam-policy-binding \
+     cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudbuild.iam.gserviceaccount.com" \
+     --role="roles/iam.serviceAccountUser"
+
+   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudbuild.iam.gserviceaccount.com" \
+     --role="roles/storage.objectAdmin"
+   ```
+
+6. **Build & Push Container Image**:
+   ```bash
+   export IMAGE_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/wiz-devex-demo-images/wiz-code-golden-demo:latest"
+
+   gcloud builds submit \
+     --project="${PROJECT_ID}" \
+     --region="${REGION}" \
+     --service-account="projects/${PROJECT_ID}/serviceAccounts/cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --config="configurations/wiz-code-golden-demo/cloudbuild.yaml" \
+     --substitutions=_IMAGE_TAG="${IMAGE_TAG}" \
+     configurations/wiz-code-golden-demo
+   ```
+
 ### 2. Configure Variables & Initialize Remote State
 Copy `terraform.tfvars.example` to `terraform.auto.tfvars`, set your GCP `project_id` and `region`, create the state bucket (`${PROJECT_ID}-wiz-devex-demo-tf-state`), and initialize Terraform:
 
@@ -70,7 +130,7 @@ terraform init -backend-config="bucket=${STATE_BUCKET}"
 ```
 
 ### 3. Apply Terraform Configuration
-Provision Artifact Registry, trigger Cloud Build to compile the custom code-server container image, and deploy the Cloud Run service secured with IAP:
+Deploy the Cloud Run service secured with IAP using the pre-built container image:
 
 ```bash
 terraform apply
@@ -85,8 +145,15 @@ Once Terraform completes:
 
 ## 🧹 Teardown Instructions
 
-To clean up all Cloud Run services, Artifact Registry images, and IAM bindings when finished presenting:
+To clean up Cloud Run services and IAM bindings provisioned by Terraform:
 
 ```bash
 terraform destroy
 ```
+
+Note: Pre-requisite resources created outside Terraform (such as the Artifact Registry repository and Cloud Build Service Account) can be deleted separately if desired using:
+```bash
+gcloud artifacts repositories delete wiz-devex-demo-images --location="${REGION}" --quiet
+gcloud iam service-accounts delete "cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" --quiet
+```
+

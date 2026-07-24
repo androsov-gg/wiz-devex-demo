@@ -5,10 +5,11 @@ output "cloud_run_service_url" {
 
 output "artifact_registry_repository" {
   description = "The Artifact Registry Docker repository storing custom code-server images."
-  value       = google_artifact_registry_repository.code_server_images.id
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images"
 }
 
 output "custom_container_image_tag" {
   description = "The fully-qualified container image URI built via Cloud Build and deployed to Cloud Run."
   value       = local.container_image
 }
+
