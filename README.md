@@ -1,4 +1,4 @@
-# wiz-devex-demo - 🚧 Work in Progress 🚧
+# wiz-devex-demo
 
 ## 🎯 Project Goal
 The goal of this project is to provide a stable and extendable platform for Wiz CEs to demonstrate how the product can be integrated into a developer's environment, specifically focusing on use of agentic coding tools.
