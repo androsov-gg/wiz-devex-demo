@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 5.30.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = ">= 5.30.0"
+    }
   }
 
   backend "gcs" {
@@ -21,18 +25,9 @@ provider "google" {
   region  = var.region
 }
 
-resource "google_project_service" "apis" {
-  for_each = toset([
-    "run.googleapis.com",
-    "aiplatform.googleapis.com",
-    "storage.googleapis.com",
-    "iam.googleapis.com",
-    "cloudbuild.googleapis.com",
-    "artifactregistry.googleapis.com",
-    "iap.googleapis.com"
-  ])
-  service            = each.key
-  disable_on_destroy = false
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
 }
 
 data "google_project" "project" {
@@ -40,44 +35,91 @@ data "google_project" "project" {
 }
 
 # ------------------------------------------------------------------------------
-# 2. Service Accounts & IAM Configurations
+# 2. Required Google Cloud APIs
 # ------------------------------------------------------------------------------
-
-# Service Account for Cloud Run code-server instance
-resource "google_service_account" "cloud_run_sa" {
-  account_id   = "code-server-runner-sa"
-  display_name = "Cloud Run Code Server Runner SA"
-  depends_on   = [google_project_service.apis]
-}
-
-resource "google_project_iam_member" "cloud_run_ar_reader" {
-  project = var.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
-}
-
-resource "google_project_iam_member" "cloud_run_vertex_user" {
-  project = var.project_id
-  role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
-}
-
-resource "google_project_iam_member" "cloud_run_logging" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.cloud_run_sa.email}"
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "run.googleapis.com",
+    "container.googleapis.com",
+    "compute.googleapis.com",
+    "firestore.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "iap.googleapis.com",
+    "aiplatform.googleapis.com",
+    "storage.googleapis.com",
+    "iam.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com"
+  ])
+  service            = each.key
+  disable_on_destroy = false
 }
 
 # ------------------------------------------------------------------------------
-# 3. Container Image Reference & Cloud Run Service Setup
+# 3. VPC Networking, Subnets & Cloud NAT (Argolis Private Cluster Compliance)
+# ------------------------------------------------------------------------------
+
+resource "google_compute_network" "vpc" {
+  name                    = var.network_name
+  auto_create_subnetworks = false
+  depends_on              = [google_project_service.apis]
+}
+
+resource "google_compute_subnetwork" "subnet" {
+  name                     = "${var.network_name}-subnet"
+  ip_cidr_range            = "10.0.0.0/24"
+  region                   = var.region
+  network                  = google_compute_network.vpc.id
+  private_ip_google_access = true
+}
+
+# Cloud Router for outbound NAT
+resource "google_compute_router" "router" {
+  name    = "${var.network_name}-router"
+  region  = var.region
+  network = google_compute_network.vpc.id
+}
+
+# Cloud NAT for outbound internet connectivity
+resource "google_compute_router_nat" "nat" {
+  name                               = "${var.network_name}-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 4. Firestore Database (Native Mode for State & Audit Storage)
+# ------------------------------------------------------------------------------
+
+resource "google_firestore_database" "database" {
+  project     = var.project_id
+  name        = "(default)"
+  location_id = var.region
+  type        = "FIRESTORE_NATIVE"
+
+  deletion_policy = "DELETE_PROTECTION_DISABLED"
+
+  depends_on = [google_project_service.apis]
+}
+
+# ------------------------------------------------------------------------------
+# 5. Cloud Run Frontend Service (Google-Managed IAP & Direct VPC Egress)
 # ------------------------------------------------------------------------------
 
 locals {
-  container_image = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images/${var.service_name}:latest"
+  frontend_image     = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images/${var.service_name}:latest"
+  config_bucket_name = var.config_bucket_name != "" ? var.config_bucket_name : "${var.project_id}-wiz-devex-demo-configs"
 }
 
-# Cloud Run v2 Service with IAP Authentication & Always-On CPU
-resource "google_cloud_run_v2_service" "code_server" {
+resource "google_cloud_run_v2_service" "frontend" {
   name        = var.service_name
   location    = var.region
   ingress     = "INGRESS_TRAFFIC_ALL"
@@ -85,29 +127,45 @@ resource "google_cloud_run_v2_service" "code_server" {
 
   deletion_protection = false
 
+  scaling {
+    manual_instance_count = 1
+    scaling_mode = "MANUAL"
+  }
+
   template {
-    service_account = google_service_account.cloud_run_sa.email
+    service_account = google_service_account.platform_frontend_sa.email
 
     scaling {
       min_instance_count = 1
       max_instance_count = 1
     }
 
+    vpc_access {
+      network_interfaces {
+        network    = google_compute_network.vpc.name
+        subnetwork = google_compute_subnetwork.subnet.name
+      }
+      egress = "ALL_TRAFFIC"
+    }
+
     containers {
-      image = local.container_image
+      image = local.frontend_image
 
       ports {
-        container_port = 8080
+        container_port = 3000
       }
 
       resources {
-        cpu_idle = false # Always-on CPU allocation for WebSockets & background tasks
         limits = {
-          cpu    = "4"
-          memory = "8Gi"
+          cpu    = "2"
+          memory = "2Gi"
         }
       }
 
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.project_id
@@ -117,67 +175,46 @@ resource "google_cloud_run_v2_service" "code_server" {
         value = var.region
       }
       env {
-        name  = "WIZ_ENV"
-        value = "demo"
+        name  = "CONFIG_BUCKET_NAME"
+        value = local.config_bucket_name
       }
       env {
-        name  = "WIZ_DATACENTER"
-        value = "eu1"
+        name  = "IAP_MEMBERS"
+        value = join(",", var.iap_members)
       }
       env {
-        name  = "WORKSPACE_DIR"
-        value = "/home/coder/project/sorcery-solutions-frontend"
+        name  = "DEMO_RUNNER_SA_EMAIL"
+        value = google_service_account.demo_runner_sa.email
       }
       env {
-        name  = "CLAUDE_CODE_USE_VERTEX"
-        value = "1"
-      }
-      env {
-        name  = "ANTHROPIC_VERTEX_PROJECT_ID"
-        value = var.project_id
-      }
-      env {
-        name  = "ANTHROPIC_VERTEX_LOCATION"
-        value = var.region
-      }
-      env {
-        name  = "CLOUD_ML_REGION"
-        value = var.region
-      }
-      env {
-        name  = "ANTHROPIC_MODEL"
-        value = "claude-sonnet-4-6"
-      }
-      env {
-        name  = "CLAUDE_CODE_EFFORT_LEVEL"
-        value = "high"
+        name  = "PROJECT_NUMBER"
+        value = data.google_project.project.number
       }
     }
   }
 
   depends_on = [
     google_project_service.apis,
-    google_project_iam_member.cloud_run_ar_reader,
-    google_project_iam_member.cloud_run_vertex_user,
-    google_project_iam_member.cloud_run_logging
+    google_firestore_database.database
   ]
 }
 
 # Allow IAP Service Agent permission to invoke Cloud Run
 resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
-  project  = google_cloud_run_v2_service.code_server.project
-  location = google_cloud_run_v2_service.code_server.location
-  name     = google_cloud_run_v2_service.code_server.name
+  project  = google_cloud_run_v2_service.frontend.project
+  location = google_cloud_run_v2_service.frontend.location
+  name     = google_cloud_run_v2_service.frontend.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-iap.iam.gserviceaccount.com"
 }
 
-# Allow designated users access to code-server via IAP
+# Allow designated users access to the platform via IAP
 resource "google_iap_web_cloud_run_service_iam_member" "user_access" {
   for_each               = toset(var.iap_members)
-  project                = google_cloud_run_v2_service.code_server.project
-  location               = google_cloud_run_v2_service.code_server.location
-  cloud_run_service_name = google_cloud_run_v2_service.code_server.name
+  project                = google_cloud_run_v2_service.frontend.project
+  location               = google_cloud_run_v2_service.frontend.location
+  cloud_run_service_name = google_cloud_run_v2_service.frontend.name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = each.key
 }
+

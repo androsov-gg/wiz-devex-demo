@@ -1,0 +1,19 @@
+wiz-code-golden-demo:
+  title: "Wiz Code Golden Demo"
+  category: "AI & DevEx"
+  module: "Wiz Code / CLI"
+  icon: "Code2"
+  port: 8080
+  cpu: "4"
+  memory: "8Gi"
+  defaultEnv:
+    WIZ_ENV: "demo"
+    WIZ_DATACENTER: "eu1"
+    WORKSPACE_DIR: "/home/coder/project/sorcery-solutions-frontend"
+    CLAUDE_CODE_USE_VERTEX: "1"
+    ANTHROPIC_MODEL: "claude-sonnet-4-6"
+    CLAUDE_CODE_EFFORT_LEVEL: "high"
+  versions:
+    1.0.0:
+      version: "1.0.0"
+      description: "Pre-configured VS Code environment with Wiz CLI, Wiz MCP, and Claude Code (Sonnet 4.6 via Agent Platform), including guardrails and steering for the Wiz Code Golden Demo flow."

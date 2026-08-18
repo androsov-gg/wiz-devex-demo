@@ -2,7 +2,7 @@
 set -e
 
 echo "========================================================================="
-echo "⚡ Starting code-server Cloud Run environment..."
+echo "⚡ Starting code-server Cloud Run Demo environment..."
 echo "========================================================================="
 
 export HOME="/home/coder"
