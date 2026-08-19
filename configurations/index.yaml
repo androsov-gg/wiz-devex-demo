@@ -1,7 +1,5 @@
 wiz-code-golden-demo:
   title: "Wiz Code Golden Demo"
-  category: "AI & DevEx"
-  module: "Wiz Code / CLI"
   icon: "Code2"
   port: 8080
   cpu: "4"
@@ -13,6 +11,9 @@ wiz-code-golden-demo:
     CLAUDE_CODE_USE_VERTEX: "1"
     ANTHROPIC_MODEL: "claude-sonnet-4-6"
     CLAUDE_CODE_EFFORT_LEVEL: "high"
+    ANTHROPIC_VERTEX_PROJECT_ID: "${PROJECT_ID}"
+    ANTHROPIC_VERTEX_LOCATION: "${REGION}"
+    CLOUD_ML_REGION: "${REGION}"
   versions:
     1.0.0:
       version: "1.0.0"

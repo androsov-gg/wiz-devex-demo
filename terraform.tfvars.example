@@ -4,8 +4,7 @@
 
 project_id   = "your-gcp-project-id"
 region       = "europe-west1" # Supported: europe-west1, us-east5, asia-southeast1, us-central1
-network_name = "wiz-devex-demo-platform-vpc"
-service_name = "wiz-devex-demo-platform"
+service_name = "wiz-ide-demo-platform"
 
 # Identity-Aware Proxy (IAP) access list
 iap_members  = ["domain:yourname.altostrat.com"]

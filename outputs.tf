@@ -10,7 +10,7 @@ output "configurations_bucket" {
 
 output "artifact_registry_repository" {
   description = "The Artifact Registry Docker repository storing platform and demo container images."
-  value       = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${var.service_name}"
 }
 
 output "platform_frontend_service_account" {

@@ -16,6 +16,13 @@ resource "google_service_account" "demo_runner_sa" {
   depends_on   = [google_project_service.apis]
 }
 
+# Dedicated Service Account for Cloud Build tasks & image creation
+resource "google_service_account" "cloudbuild_builder_sa" {
+  account_id   = "wiz-demo-builder-sa"
+  display_name = "Wiz Demo Dedicated Cloud Build SA"
+  depends_on   = [google_project_service.apis]
+}
+
 # ------------------------------------------------------------------------------
 # Frontend SA IAM Roles: Firestore, Cloud Build, Artifact Registry, Cloud Run, GCS
 # ------------------------------------------------------------------------------
@@ -121,6 +128,45 @@ resource "google_project_iam_member" "demo_runner_logging" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.demo_runner_sa.email}"
+}
+
+# ------------------------------------------------------------------------------
+# Dedicated Cloud Build SA IAM Roles & Service Agent Configuration
+# ------------------------------------------------------------------------------
+
+resource "google_project_iam_member" "cloudbuild_builder_roles" {
+  for_each = toset([
+    "roles/storage.admin",
+    "roles/storage.objectAdmin",
+    "roles/artifactregistry.writer",
+    "roles/logging.logWriter"
+  ])
+  project = var.project_id
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.cloudbuild_builder_sa.email}"
+}
+
+# Allow Cloud Build Service Agent to impersonate builder SA
+resource "google_service_account_iam_member" "cloudbuild_sa_actas_builder" {
+  service_account_id = google_service_account.cloudbuild_builder_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+  depends_on         = [google_project_service_identity.cloudbuild_sa]
+}
+
+# Allow Cloud Build Service Agent storage object admin access
+resource "google_project_iam_member" "cloudbuild_sa_storage_admin" {
+  project    = var.project_id
+  role       = "roles/storage.objectAdmin"
+  member     = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+  depends_on = [google_project_service_identity.cloudbuild_sa]
+}
+
+# Allow Compute Engine default SA to pull images from Artifact Registry
+resource "google_project_iam_member" "compute_default_sa_ar_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
 }
 
 

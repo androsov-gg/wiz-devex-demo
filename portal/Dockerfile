@@ -1,38 +1,41 @@
-# Stage 1: Dependencies
-FROM node:20-alpine AS deps
-WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package.json ./
+# ------------------------------------------------------------------------------
+# Stage 1: Build React (Vite) Frontend
+# ------------------------------------------------------------------------------
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+
+COPY frontend/package.json ./
 RUN npm install
 
-# Stage 2: Builder
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . ./
-RUN mkdir -p /app/public
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
+COPY frontend/ ./
 RUN npm run build
 
-# Stage 3: Runner
-FROM node:20-alpine AS runner
+# ------------------------------------------------------------------------------
+# Stage 2: Build Go Backend
+# ------------------------------------------------------------------------------
+FROM golang:1.23-alpine AS backend-builder
+WORKDIR /app/backend
+
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download || true
+
+COPY backend/ ./
+# Copy compiled frontend dist into backend embed directory
+COPY --from=frontend-builder /app/frontend/dist ./dist
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/server .
+
+# ------------------------------------------------------------------------------
+# Stage 3: Minimal Production Image (Alpine)
+# ------------------------------------------------------------------------------
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+
 WORKDIR /app
+COPY --from=backend-builder /app/server ./server
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
+ENV GIN_MODE=release
 
 EXPOSE 3000
-
-CMD ["node", "server.js"]
+ENTRYPOINT ["/app/server"]

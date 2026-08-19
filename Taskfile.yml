@@ -5,74 +5,59 @@ vars:
     sh: gcloud config get-value project 2>/dev/null || echo "$PROJECT_ID"
   REGION:
     sh: echo "${REGION:-europe-west1}"
-  SERVICE_NAME: wiz-devex-demo-platform
-  NETWORK_NAME: wiz-devex-demo-platform-vpc
-  STATE_BUCKET: '{{.PROJECT_ID}}-wiz-devex-demo-tf-state'
-  CONFIG_BUCKET: '{{.PROJECT_ID}}-wiz-devex-demo-configs'
-  PORTAL_IMAGE: '{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/wiz-devex-demo-images/{{.SERVICE_NAME}}:latest'
+  SERVICE_NAME: wiz-ide-demo-platform
+  STATE_BUCKET: '{{.PROJECT_ID}}-{{.SERVICE_NAME}}-tfstate'
+  PORTAL_IMAGE: '{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/{{.SERVICE_NAME}}/portal:latest'
 
 tasks:
   default:
-    desc: Show list of available tasks
+    desc: 'Show list of available tasks'
     cmds:
       - task --list
 
   bootstrap:
-    desc: 🚀 1-Click setup for Argolis APIs, Artifact Registry, Cloud Build SA, and state/config buckets
+    desc: '🚀 1-Click setup: creates remote Terraform state bucket'
     cmds:
-      - ./scripts/bootstrap.sh
-
-  sync-configs:
-    desc: 📤 Sync the configurations/ directory to the GCS configurations bucket
-    cmds:
-      - gcloud storage rsync configurations "gs://{{.CONFIG_BUCKET}}" --recursive
-
-  build:
-    desc: 🏗️ Build and push the Next.js Frontend Portal container image via Cloud Build
-    cmds:
-      - >
-        gcloud builds submit
-        --project="{{.PROJECT_ID}}"
-        --region="{{.REGION}}"
-        --service-account="projects/{{.PROJECT_ID}}/serviceAccounts/cloudbuild-builder-sa@{{.PROJECT_ID}}.iam.gserviceaccount.com"
-        --config="portal/cloudbuild.yaml"
-        --substitutions=_IMAGE_TAG="{{.PORTAL_IMAGE}}"
-        portal
+      - |
+        if ! gcloud storage buckets describe "gs://{{.STATE_BUCKET}}" >/dev/null 2>&1; then
+          gcloud storage buckets create "gs://{{.STATE_BUCKET}}" --location="{{.REGION}}" --uniform-bucket-level-access
+          echo "✅ Remote state bucket 'gs://{{.STATE_BUCKET}}' created."
+        else
+          echo "ℹ️ Remote state bucket 'gs://{{.STATE_BUCKET}}' already exists."
+        fi
 
   init:
-    desc: 🔧 Initialize Terraform with the remote GCS state bucket
+    desc: '🔧 Initialize Terraform with the remote GCS state bucket'
     cmds:
       - terraform init -backend-config="bucket={{.STATE_BUCKET}}"
 
   plan:
-    desc: 📋 Run Terraform plan
+    desc: '📋 Run Terraform plan'
     cmds:
       - terraform plan
 
   apply:
-    desc: ⚡ Apply Terraform configuration (VPC, Cloud NAT, GCS, Firestore, Cloud Run IAP)
+    desc: '⚡ Complete infrastructure deployment (APIs, AR, Builder SA, Image Build, GCS, Firestore, Cloud Run)'
     cmds:
       - terraform apply
 
-  deploy:
-    desc: 🚀 Complete deployment (Builds portal image + applies Terraform + syncs configurations)
-    cmds:
-      - task: build
-      - task: apply
-      - task: sync-configs
-
   url:
-    desc: 🌐 Output the direct IAP-secured Portal URL
+    desc: '🌐 Output the direct IAP-secured Portal URL'
     cmds:
       - terraform output portal_url
 
   destroy:
-    desc: 🧹 Tear down all infrastructure provisioned by Terraform
+    desc: '🧹 Tear down all infrastructure provisioned by Terraform'
     cmds:
       - terraform destroy
 
-  'ops:refresh-portal':
-    desc: 🔄 Force Cloud Run to re-pull the latest container image and deploy a new revision
+  'dev:deps':
+    desc: '📦 Download Go backend and React frontend dependencies for local IDE support'
+    cmds:
+      - cd portal/backend && go mod tidy
+      - cd portal/frontend && npm install
+
+  'dev:refresh-portal':
+    desc: '🔄 Force Cloud Run to re-pull the latest container image and deploy a new revision'
     cmds:
       - gcloud run services update {{.SERVICE_NAME}} --region={{.REGION}} --image="{{.PORTAL_IMAGE}}"
-

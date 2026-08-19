@@ -12,22 +12,11 @@ variable "region" {
   }
 }
 
-variable "network_name" {
-  type        = string
-  default     = "wiz-devex-demo-platform-vpc"
-  description = "Name of the custom VPC network."
-}
 
 variable "service_name" {
   type        = string
-  default     = "wiz-devex-demo-platform"
+  default     = "wiz-ide-demo-platform"
   description = "Name of the IAP-secured Cloud Run frontend service."
-}
-
-variable "config_bucket_name" {
-  type        = string
-  default     = ""
-  description = "Optional custom name for the GCS configurations storage bucket. Defaults to <project_id>-wiz-devex-demo-configs."
 }
 
 variable "iap_members" {

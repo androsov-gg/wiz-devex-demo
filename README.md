@@ -6,7 +6,7 @@ The **Wiz Demo Platform** is a sales demonstration and solution engineering hub 
 It allows sales engineers (CEs) to browse a catalog of pre-configured demo environments (such as the **Wiz Code & Claude Code Golden Demo**), launch isolated demo instances on-demand as dedicated Cloud Run v2 services, monitor their lifecycle in real-time, and access them directly through a **Google-Managed Identity-Aware Proxy (IAP)** perimeter with **Zero OAuth Credentials** required.
 
 ### 📦 Decoupled Configuration Architecture
-The platform portal contains **no hardcoded demo configurations**. Instead, demo templates and versioned files are dynamically loaded from a Google Cloud Storage bucket (`gs://<PROJECT_ID>-wiz-devex-demo-configs`).
+The platform portal contains **no hardcoded demo configurations**. Instead, demo templates and versioned files are dynamically loaded from a Google Cloud Storage bucket (`gs://<PROJECT_ID>-<SERVICE_NAME>-configs`).
 
 The storage bucket is populated from the `configurations/` folder in this repository:
 ```
@@ -54,7 +54,7 @@ All deployment, building, configuration syncing, and management tasks are automa
 ---
 
 ### 2. Bootstrap Environment
-Run the 1-click bootstrap task to enable APIs, create the Artifact Registry repository, configure Cloud Build permissions, and create the state & configurations buckets:
+Run the 1-click bootstrap task to ensure the remote Terraform state bucket is provisioned:
 
 ```bash
 task bootstrap
@@ -62,7 +62,7 @@ task bootstrap
 
 ---
 
-### 3. Build & Deploy
+### 3. Deploy
 
 1. Customize `terraform.auto.tfvars`:
    ```bash
@@ -70,12 +70,12 @@ task bootstrap
    # Update project_id, region, and iap_members in terraform.auto.tfvars
    ```
 
-2. Build, Deploy, and Sync Configurations:
+2. Initialize and Deploy:
    ```bash
    task init
-   task deploy
+   task apply
    ```
-   *(Or individually: `task build`, `task apply`, and `task sync-configs`).*
+   *Terraform will automatically enable APIs, create Artifact Registry, provision dedicated service accounts and IAM roles, build and push the frontend portal container image via Cloud Build, sync configuration templates to GCS, and deploy the IAP-secured Cloud Run service.*
 
 3. Get your Portal URL:
    ```bash
@@ -89,13 +89,11 @@ task bootstrap
 
 | Command | Description |
 | :--- | :--- |
-| `task bootstrap` | 🚀 1-Click setup for Argolis APIs, Artifact Registry, Cloud Build SA, and state/config buckets |
-| `task sync-configs` | 📤 Sync the `configurations/` directory to the GCS configurations bucket |
-| `task build` | 🏗️ Build and push the Next.js Frontend Portal container image via Cloud Build |
+| `task bootstrap` | 🚀 1-Click setup: creates remote Terraform state bucket |
 | `task init` | 🔧 Initialize Terraform with the remote GCS state bucket |
 | `task plan` | 📋 Run `terraform plan` |
-| `task apply` | ⚡ Apply Terraform configuration (VPC, Cloud NAT, GCS, Firestore, Cloud Run IAP) |
-| `task deploy` | 🚀 Complete deployment (`task build` + `task apply` + `task sync-configs`) |
+| `task apply` | ⚡ Complete infrastructure deployment (APIs, AR, Builder SA, Image Build, GCS, Firestore, Cloud Run) |
+| `task deploy` | 🚀 Complete deployment (Alias for `task apply`) |
 | `task url` | 🌐 Display the IAP-secured Portal URL |
 | `task destroy` | 🧹 Tear down all provisioned infrastructure |
 
