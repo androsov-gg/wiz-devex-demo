@@ -52,7 +52,17 @@ func runDeploy(cmd *cobra.Command, args []string) {
 	}
 
 	// 3. Resolve & Confirm Deployment Configuration
-	cfg, err := config.ResolveDeploymentConfig(selectedScenario, flagProject, flagRegion, flagIAPMember, true)
+	cfg, err := config.ResolveDeploymentConfig(
+		selectedScenario,
+		flagProject,
+		flagRegion,
+		flagIAPMember,
+		flagEnableScheduler,
+		flagScheduleTimezone,
+		flagScaleDownSched,
+		flagScaleUpSched,
+		true,
+	)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Configuration resolution error: %v", err))
 		os.Exit(1)
@@ -71,6 +81,12 @@ func runDeploy(cmd *cobra.Command, args []string) {
 	}
 	ui.Detail("Configuration Fingerprint", cfg.ImageTag)
 	ui.Detail("Target Image", cfg.FullImageTag)
+	if cfg.EnableScheduler {
+		ui.Detail("Off-Hours Scaling", fmt.Sprintf("Enabled (Scale-down: %s, Scale-up: %s, TZ: %s)", cfg.ScaleDownSchedule, cfg.ScaleUpSchedule, cfg.ScheduleTimezone))
+	} else {
+		ui.Detail("Off-Hours Scaling", "Disabled (Always 1 min instance)")
+	}
+
 
 	if !ui.PromptConfirm("Proceed with deployment?", true) {
 		ui.Info("Deployment cancelled by user.")

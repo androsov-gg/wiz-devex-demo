@@ -22,15 +22,33 @@ var SupportedRegions = []string{
 
 // DeployConfig contains the deployment settings for a demo scenario.
 type DeployConfig struct {
-	ProjectID     string
-	Region        string
-	ImageTag      string
-	FullImageTag  string
-	FullLatestTag string
-	StateBucket   string
-	IAPMembers    []string
-	Scenario      *scenario.Scenario
+	ProjectID         string
+	Region            string
+	ImageTag          string
+	FullImageTag      string
+	FullLatestTag     string
+	StateBucket       string
+	IAPMembers        []string
+	Scenario          *scenario.Scenario
+	EnableScheduler   bool
+	ScheduleTimezone  string
+	ScaleDownSchedule string
+	ScaleUpSchedule   string
 }
+
+// TFVarsData contains all parsed variables from an existing terraform.auto.tfvars file.
+type TFVarsData struct {
+	ProjectID         string
+	Region            string
+	ServiceName       string
+	ImageTag          string
+	IAPMembers        []string
+	EnableScheduler   *bool
+	ScheduleTimezone  string
+	ScaleDownSchedule string
+	ScaleUpSchedule   string
+}
+
 
 // ValidateRegion verifies if the provided region is in the supported list.
 func ValidateRegion(region string) error {
@@ -94,19 +112,68 @@ func InferDefaultIAPMember(account string) string {
 	return fmt.Sprintf("domain:%s.altostrat.com", account)
 }
 
+// NormalizeScheduleCron converts a user time input (e.g. "08:00", "8am", "19:00", "7pm", "8", "19")
+// or standard 5-part cron expression into a valid Cloud Scheduler cron expression.
+func NormalizeScheduleCron(input, defaultCron string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultCron
+	}
+
+	// If it contains multiple spaces, it's already a full cron expression (e.g., "0 8 * * 1-5")
+	if strings.Count(input, " ") >= 4 {
+		return input
+	}
+
+	lower := strings.ToLower(input)
+	isPM := strings.Contains(lower, "pm")
+	isAM := strings.Contains(lower, "am")
+	cleaned := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(lower, "pm", ""), "am", ""))
+
+	var hour, min int
+	if strings.Contains(cleaned, ":") {
+		parts := strings.Split(cleaned, ":")
+		fmt.Sscanf(parts[0], "%d", &hour)
+		if len(parts) > 1 {
+			fmt.Sscanf(parts[1], "%d", &min)
+		}
+	} else {
+		fmt.Sscanf(cleaned, "%d", &hour)
+		min = 0
+	}
+
+	if isPM && hour < 12 {
+		hour += 12
+	}
+	if isAM && hour == 12 {
+		hour = 0
+	}
+
+	if hour >= 0 && hour <= 23 && min >= 0 && min <= 59 {
+		return fmt.Sprintf("%d %d * * 1-5", min, hour)
+	}
+
+	return input
+}
+
 // ResolveDeploymentConfig resolves all deployment parameters via flags, defaults, and interactive prompts.
-func ResolveDeploymentConfig(selectedScenario *scenario.Scenario, flagProj, flagReg, flagIAP string, interactive bool) (*DeployConfig, error) {
+func ResolveDeploymentConfig(
+	selectedScenario *scenario.Scenario,
+	flagProj, flagReg, flagIAP string,
+	flagEnableSched, flagSchedTZ, flagScaleDown, flagScaleUp string,
+	interactive bool,
+) (*DeployConfig, error) {
 	if selectedScenario == nil {
 		return nil, fmt.Errorf("cannot resolve deployment config: scenario is nil")
 	}
 
 	detectedProject, detectedAccount, _ := DetectGCPDefaults()
-	existingProject, existingRegion, _, _, existingIAP := ReadExistingTFVars(selectedScenario.TerraformDir)
+	existing := ReadExistingFullTFVars(selectedScenario.TerraformDir)
 
 	// 1. Resolve Project ID (Priority: CLI flag > Existing tfvars > Detected gcloud project)
 	targetProject := flagProj
 	if targetProject == "" {
-		defaultProj := existingProject
+		defaultProj := existing.ProjectID
 		if defaultProj == "" {
 			defaultProj = detectedProject
 		}
@@ -123,7 +190,7 @@ func ResolveDeploymentConfig(selectedScenario *scenario.Scenario, flagProj, flag
 	// 2. Resolve Region (Priority: CLI flag > Existing tfvars > Default europe-west1)
 	targetRegion := flagReg
 	if targetRegion == "" || targetRegion == "europe-west1" {
-		defaultRegion := existingRegion
+		defaultRegion := existing.Region
 		if defaultRegion == "" {
 			defaultRegion = "europe-west1"
 		}
@@ -149,8 +216,8 @@ func ResolveDeploymentConfig(selectedScenario *scenario.Scenario, flagProj, flag
 	targetIAP := flagIAP
 	if targetIAP == "" {
 		defaultIAP := ""
-		if len(existingIAP) > 0 {
-			defaultIAP = existingIAP[0]
+		if len(existing.IAPMembers) > 0 {
+			defaultIAP = existing.IAPMembers[0]
 		}
 		if defaultIAP == "" {
 			defaultIAP = InferDefaultIAPMember(detectedAccount)
@@ -162,7 +229,50 @@ func ResolveDeploymentConfig(selectedScenario *scenario.Scenario, flagProj, flag
 		}
 	}
 
-	// 4. Compute Content Hash Fingerprint
+	// 4. Resolve Cloud Scheduler settings (Off-hours scaling: scale down to 0 at end of working day, back up to 1 at start of day)
+	enableSched := true
+	if existing.EnableScheduler != nil {
+		enableSched = *existing.EnableScheduler
+	}
+	if flagEnableSched != "" {
+		enableSched = (strings.ToLower(flagEnableSched) == "true" || flagEnableSched == "1")
+	} else if interactive {
+		enableSched = ui.PromptConfirm("Enable automated off-hours scaling with Cloud Scheduler (0 min instances off-hours, 1 min instance working hours)?", enableSched)
+	}
+
+	schedTimezone := "UTC"
+	if existing.ScheduleTimezone != "" {
+		schedTimezone = existing.ScheduleTimezone
+	}
+	if flagSchedTZ != "" {
+		schedTimezone = flagSchedTZ
+	} else if interactive && enableSched {
+		schedTimezone = ui.PromptString("Schedule Timezone (IANA format, e.g. America/New_York, Europe/London, America/Los_Angeles, UTC)", schedTimezone)
+	}
+
+	scaleUpSched := "0 8 * * 1-5"
+	if existing.ScaleUpSchedule != "" {
+		scaleUpSched = existing.ScaleUpSchedule
+	}
+	if flagScaleUp != "" {
+		scaleUpSched = NormalizeScheduleCron(flagScaleUp, "0 8 * * 1-5")
+	} else if interactive && enableSched {
+		rawUp := ui.PromptString("Working day start time (scale up to 1 instance) [Mon-Fri] (e.g. 08:00, 8am, or cron '0 8 * * 1-5')", "08:00")
+		scaleUpSched = NormalizeScheduleCron(rawUp, "0 8 * * 1-5")
+	}
+
+	scaleDownSched := "0 19 * * 1-5"
+	if existing.ScaleDownSchedule != "" {
+		scaleDownSched = existing.ScaleDownSchedule
+	}
+	if flagScaleDown != "" {
+		scaleDownSched = NormalizeScheduleCron(flagScaleDown, "0 19 * * 1-5")
+	} else if interactive && enableSched {
+		rawDown := ui.PromptString("Working day end time (scale down to 0 instances) [Mon-Fri] (e.g. 19:00, 7pm, or cron '0 19 * * 1-5')", "19:00")
+		scaleDownSched = NormalizeScheduleCron(rawDown, "0 19 * * 1-5")
+	}
+
+	// 5. Compute Content Hash Fingerprint
 	contentHash, err := scenario.ComputeContentHash(selectedScenario.Dir)
 	if err != nil || contentHash == "" {
 		contentHash = "latest"
@@ -173,14 +283,18 @@ func ResolveDeploymentConfig(selectedScenario *scenario.Scenario, flagProj, flag
 	latestTag := fmt.Sprintf("%s-docker.pkg.dev/%s/wiz-devex-demo-images/%s:latest", targetRegion, targetProject, selectedScenario.Name)
 
 	return &DeployConfig{
-		ProjectID:     targetProject,
-		Region:        targetRegion,
-		ImageTag:      contentHash,
-		FullImageTag:  imageTag,
-		FullLatestTag: latestTag,
-		StateBucket:   stateBucket,
-		IAPMembers:    []string{targetIAP},
-		Scenario:      selectedScenario,
+		ProjectID:         targetProject,
+		Region:            targetRegion,
+		ImageTag:          contentHash,
+		FullImageTag:      imageTag,
+		FullLatestTag:     latestTag,
+		StateBucket:       stateBucket,
+		IAPMembers:        []string{targetIAP},
+		Scenario:          selectedScenario,
+		EnableScheduler:   enableSched,
+		ScheduleTimezone:  schedTimezone,
+		ScaleDownSchedule: scaleDownSched,
+		ScaleUpSchedule:   scaleUpSched,
 	}, nil
 }
 
@@ -211,6 +325,19 @@ func WriteTFVars(terraformDir string, cfg *DeployConfig) error {
 		imageTag = "latest"
 	}
 
+	timezone := cfg.ScheduleTimezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	scaleDown := cfg.ScaleDownSchedule
+	if scaleDown == "" {
+		scaleDown = "0 19 * * 1-5"
+	}
+	scaleUp := cfg.ScaleUpSchedule
+	if scaleUp == "" {
+		scaleUp = "0 8 * * 1-5"
+	}
+
 	content := fmt.Sprintf(`# Automatically generated by deployer-cli. DO NOT EDIT DIRECTLY.
 project_id   = %q
 region       = %q
@@ -219,7 +346,14 @@ image_tag    = %q
 iap_members  = [
 %s
 ]
-`, cfg.ProjectID, cfg.Region, cfg.Scenario.Name, imageTag, strings.Join(iapMembersFormatted, ",\n"))
+
+# Cloud Scheduler Off-Hours Scaling Settings (Cost Optimization)
+enable_scheduler    = %t
+schedule_timezone   = %q
+scale_down_schedule = %q
+scale_up_schedule   = %q
+`, cfg.ProjectID, cfg.Region, cfg.Scenario.Name, imageTag, strings.Join(iapMembersFormatted, ",\n"),
+		cfg.EnableScheduler, timezone, scaleDown, scaleUp)
 
 	tfvarsPath := filepath.Join(terraformDir, "terraform.auto.tfvars")
 	if err := os.WriteFile(tfvarsPath, []byte(content), 0644); err != nil {
@@ -229,14 +363,15 @@ iap_members  = [
 	return nil
 }
 
-// ReadExistingTFVars reads simple key/values from an existing terraform.auto.tfvars file if present.
-func ReadExistingTFVars(terraformDir string) (projectID, region, serviceName, imageTag string, iapMembers []string) {
+// ReadExistingFullTFVars reads all key/values from an existing terraform.auto.tfvars file if present.
+func ReadExistingFullTFVars(terraformDir string) TFVarsData {
 	tfvarsPath := filepath.Join(terraformDir, "terraform.auto.tfvars")
 	data, err := os.ReadFile(tfvarsPath)
 	if err != nil {
-		return "", "", "", "", nil
+		return TFVarsData{}
 	}
 
+	var res TFVarsData
 	lines := strings.Split(string(data), "\n")
 	inIAP := false
 	for _, line := range lines {
@@ -252,25 +387,43 @@ func ReadExistingTFVars(terraformDir string) (projectID, region, serviceName, im
 			}
 			val := extractQuotedString(line)
 			if val != "" {
-				iapMembers = append(iapMembers, val)
+				res.IAPMembers = append(res.IAPMembers, val)
 			}
 			continue
 		}
 
 		if strings.HasPrefix(line, "project_id") {
-			projectID = extractQuotedString(line)
+			res.ProjectID = extractQuotedString(line)
 		} else if strings.HasPrefix(line, "region") {
-			region = extractQuotedString(line)
+			res.Region = extractQuotedString(line)
 		} else if strings.HasPrefix(line, "service_name") {
-			serviceName = extractQuotedString(line)
+			res.ServiceName = extractQuotedString(line)
 		} else if strings.HasPrefix(line, "image_tag") {
-			imageTag = extractQuotedString(line)
+			res.ImageTag = extractQuotedString(line)
 		} else if strings.HasPrefix(line, "iap_members") {
 			inIAP = true
+		} else if strings.HasPrefix(line, "enable_scheduler") {
+			val := strings.TrimSpace(strings.TrimPrefix(line, "enable_scheduler"))
+			val = strings.TrimSpace(strings.TrimPrefix(val, "="))
+			val = strings.ToLower(strings.Trim(val, `"'`))
+			b := (val == "true")
+			res.EnableScheduler = &b
+		} else if strings.HasPrefix(line, "schedule_timezone") {
+			res.ScheduleTimezone = extractQuotedString(line)
+		} else if strings.HasPrefix(line, "scale_down_schedule") {
+			res.ScaleDownSchedule = extractQuotedString(line)
+		} else if strings.HasPrefix(line, "scale_up_schedule") {
+			res.ScaleUpSchedule = extractQuotedString(line)
 		}
 	}
 
-	return projectID, region, serviceName, imageTag, iapMembers
+	return res
+}
+
+// ReadExistingTFVars reads simple key/values from an existing terraform.auto.tfvars file if present.
+func ReadExistingTFVars(terraformDir string) (projectID, region, serviceName, imageTag string, iapMembers []string) {
+	data := ReadExistingFullTFVars(terraformDir)
+	return data.ProjectID, data.Region, data.ServiceName, data.ImageTag, data.IAPMembers
 }
 
 func extractQuotedString(line string) string {
@@ -284,3 +437,4 @@ func extractQuotedString(line string) string {
 	}
 	return line[first+1 : last]
 }
+

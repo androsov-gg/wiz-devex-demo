@@ -28,6 +28,7 @@ var RequiredAPIs = []string{
 	"artifactregistry.googleapis.com",
 	"storage.googleapis.com",
 	"iam.googleapis.com",
+	"cloudscheduler.googleapis.com",
 }
 
 // CloudRunServiceInfo holds summary details about a deployed Cloud Run service.

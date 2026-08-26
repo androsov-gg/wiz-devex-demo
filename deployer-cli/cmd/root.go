@@ -8,11 +8,15 @@ import (
 )
 
 var (
-	flagProject   string
-	flagRegion    string
-	flagScenario  string
-	flagIAPMember string
-	flagVerbose   bool
+	flagProject          string
+	flagRegion           string
+	flagScenario         string
+	flagIAPMember        string
+	flagVerbose          bool
+	flagEnableScheduler  string
+	flagScheduleTimezone string
+	flagScaleDownSched   string
+	flagScaleUpSched     string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -37,4 +41,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagScenario, "scenario", "s", "", "Demo scenario name (from configurations/)")
 	rootCmd.PersistentFlags().StringVarP(&flagIAPMember, "iap-member", "m", "", "Allowed IAP member (e.g. domain:yourname.altostrat.com)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose execution logging")
+	rootCmd.PersistentFlags().StringVar(&flagEnableScheduler, "enable-scheduler", "", "Enable Cloud Scheduler off-hours scaling (true/false)")
+	rootCmd.PersistentFlags().StringVar(&flagScheduleTimezone, "schedule-timezone", "", "Timezone for Cloud Scheduler scaling jobs (e.g. America/New_York, UTC)")
+	rootCmd.PersistentFlags().StringVar(&flagScaleDownSched, "scale-down-schedule", "", "Schedule for scaling down to 0 instances (e.g. 19:00, 0 19 * * 1-5)")
+	rootCmd.PersistentFlags().StringVar(&flagScaleUpSched, "scale-up-schedule", "", "Schedule for scaling up to 1 instance (e.g. 08:00, 0 8 * * 1-5)")
 }

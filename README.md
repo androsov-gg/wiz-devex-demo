@@ -11,11 +11,18 @@ It deploys an IAP-secured Cloud Run service running a custom **code-server** con
 * **Base Image**: `codercom/code-server:latest`
 * **Custom Image**: `${region}-docker.pkg.dev/${project_id}/wiz-devex-demo-images/${scenario_name}:latest` (built via Cloud Build)
 * **Compute Resources**: 4 vCPU, 8 GB memory
-* **CPU Allocation**: Always allocated (`cpu_idle = false`) to maintain active WebSocket connections, integrated terminals, and background language servers.
-* **Instance Scaling**: 1 min instance, 1 max instance (always-on 1 service running)
+* **CPU Allocation**: Always allocated (`cpu_idle = false`) during working hours to maintain active WebSocket connections, integrated terminals, and background language servers.
+* **Instance Scaling & Scheduling**: Automated Cloud Scheduler jobs scale min instances down to 0 at the end of the working day (e.g. 7 PM Mon-Fri) and back up to 1 at the start of the day (e.g. 8 AM Mon-Fri) in a configurable timezone.
 * **Access Control**: Google Identity-Aware Proxy (IAP) direct integration
 
 ---
+
+### ⏰ Automated Scaling & Cost Optimization (Cloud Scheduler)
+
+To prevent unnecessary Cloud Run compute costs outside of business hours, the infrastructure includes automated Google Cloud Scheduler jobs:
+- **Scale Down**: Scales `min_instance_count` to `0` at the end of the working day (`scale_down_schedule = "0 19 * * 1-5"` by default).
+- **Scale Up**: Scales `min_instance_count` to `1` at the start of the working day (`scale_up_schedule = "0 8 * * 1-5"` by default).
+- **Configurable**: Configure your local timezone (`schedule_timezone`), custom cron hours, or disable via `enable_scheduler = false` in `terraform.auto.tfvars`.
 
 ## ⚡ Quickstart Deployment (Recommended)
 

@@ -38,7 +38,17 @@ func runBuild(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	cfg, err := config.ResolveDeploymentConfig(selectedScenario, flagProject, flagRegion, flagIAPMember, true)
+	cfg, err := config.ResolveDeploymentConfig(
+		selectedScenario,
+		flagProject,
+		flagRegion,
+		flagIAPMember,
+		flagEnableScheduler,
+		flagScheduleTimezone,
+		flagScaleDownSched,
+		flagScaleUpSched,
+		false,
+	)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Configuration resolution error: %v", err))
 		os.Exit(1)

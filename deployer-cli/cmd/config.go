@@ -37,19 +37,26 @@ func runConfig(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	existingProject, existingRegion, existingService, existingImageTag, existingIAP := config.ReadExistingTFVars(selectedScenario.TerraformDir)
+	existing := config.ReadExistingFullTFVars(selectedScenario.TerraformDir)
 
 	ui.SectionHeader(fmt.Sprintf("Current Configuration for %s", selectedScenario.Name))
 	ui.Detail("Terraform Directory", selectedScenario.TerraformDir)
-	if existingProject != "" {
-		ui.Detail("Project ID", existingProject)
-		ui.Detail("Region", existingRegion)
-		ui.Detail("Service Name", existingService)
-		if existingImageTag != "" {
-			ui.Detail("Image Tag", existingImageTag)
+	if existing.ProjectID != "" {
+		ui.Detail("Project ID", existing.ProjectID)
+		ui.Detail("Region", existing.Region)
+		ui.Detail("Service Name", existing.ServiceName)
+		if existing.ImageTag != "" {
+			ui.Detail("Image Tag", existing.ImageTag)
 		}
-		if len(existingIAP) > 0 {
-			ui.Detail("IAP Members", existingIAP[0])
+		if len(existing.IAPMembers) > 0 {
+			ui.Detail("IAP Members", existing.IAPMembers[0])
+		}
+		if existing.EnableScheduler != nil {
+			if *existing.EnableScheduler {
+				ui.Detail("Off-Hours Scaling", fmt.Sprintf("Enabled (Scale-down: %s, Scale-up: %s, TZ: %s)", existing.ScaleDownSchedule, existing.ScaleUpSchedule, existing.ScheduleTimezone))
+			} else {
+				ui.Detail("Off-Hours Scaling", "Disabled (Always 1 min instance)")
+			}
 		}
 	} else {
 		ui.Info("No existing terraform.auto.tfvars file found.")
@@ -59,7 +66,17 @@ func runConfig(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	cfg, err := config.ResolveDeploymentConfig(selectedScenario, flagProject, flagRegion, flagIAPMember, true)
+	cfg, err := config.ResolveDeploymentConfig(
+		selectedScenario,
+		flagProject,
+		flagRegion,
+		flagIAPMember,
+		flagEnableScheduler,
+		flagScheduleTimezone,
+		flagScaleDownSched,
+		flagScaleUpSched,
+		true,
+	)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Configuration resolution error: %v", err))
 		os.Exit(1)

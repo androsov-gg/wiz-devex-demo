@@ -30,7 +30,8 @@ resource "google_project_service" "apis" {
     "run.googleapis.com",
     "aiplatform.googleapis.com",
     "iap.googleapis.com",
-    "iam.googleapis.com"
+    "iam.googleapis.com",
+    "cloudscheduler.googleapis.com"
   ])
   service            = each.key
   disable_on_destroy = false
@@ -92,13 +93,13 @@ resource "google_cloud_run_v2_service" "code_server" {
 
   deletion_protection = false
 
+  scaling {
+    scaling_mode          = "MANUAL"
+    manual_instance_count = 1
+  }
+
   template {
     service_account = google_service_account.cloud_run_sa.email
-
-    scaling {
-      min_instance_count = 1
-      max_instance_count = 1
-    }
 
     containers {
       image = local.container_image
@@ -158,6 +159,12 @@ resource "google_cloud_run_v2_service" "code_server" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [
+      scaling[0].manual_instance_count
+    ]
+  }
+
   depends_on = [
     time_sleep.wait_for_apis,
     google_project_iam_member.cloud_run_ar_reader,
@@ -186,3 +193,106 @@ resource "google_iap_web_cloud_run_service_iam_member" "user_access" {
   member                 = each.key
   depends_on             = [time_sleep.wait_for_apis]
 }
+
+# ------------------------------------------------------------------------------
+# 4. Cloud Scheduler Scheduled Scaling (Off-Hours Cost Optimization)
+# ------------------------------------------------------------------------------
+
+# Service account for Cloud Scheduler to patch Cloud Run service scaling
+resource "google_service_account" "scheduler_sa" {
+  count        = var.enable_scheduler ? 1 : 0
+  account_id   = "code-server-scheduler-sa"
+  display_name = "Cloud Run Scaling Scheduler Service Account"
+  depends_on   = [time_sleep.wait_for_apis]
+}
+
+# Grant Cloud Scheduler SA permission to update Cloud Run service configuration
+resource "google_cloud_run_v2_service_iam_member" "scheduler_run_developer" {
+  count      = var.enable_scheduler ? 1 : 0
+  project    = google_cloud_run_v2_service.code_server.project
+  location   = google_cloud_run_v2_service.code_server.location
+  name       = google_cloud_run_v2_service.code_server.name
+  role       = "roles/run.developer"
+  member     = "serviceAccount:${google_service_account.scheduler_sa[0].email}"
+  depends_on = [time_sleep.wait_for_apis]
+}
+
+# Grant Cloud Scheduler SA permission to act as Cloud Run runtime service account
+resource "google_service_account_iam_member" "scheduler_sa_user" {
+  count              = var.enable_scheduler ? 1 : 0
+  service_account_id = google_service_account.cloud_run_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.scheduler_sa[0].email}"
+  depends_on         = [time_sleep.wait_for_apis]
+}
+
+# Cloud Scheduler Job: Scale Down to 0 at end of working day
+resource "google_cloud_scheduler_job" "scale_down" {
+  count       = var.enable_scheduler ? 1 : 0
+  name        = "${var.service_name}-scale-down"
+  description = "Scale Cloud Run manual instances to 0 at the end of the working day"
+  schedule    = var.scale_down_schedule
+  time_zone   = var.schedule_timezone
+  region      = var.region
+
+  http_target {
+    http_method = "PATCH"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
+    body = base64encode(jsonencode({
+      scaling = {
+        scalingMode         = "MANUAL"
+        manualInstanceCount = 0
+      }
+    }))
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler_sa[0].email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [
+    time_sleep.wait_for_apis,
+    google_cloud_run_v2_service_iam_member.scheduler_run_developer,
+    google_service_account_iam_member.scheduler_sa_user
+  ]
+}
+
+# Cloud Scheduler Job: Scale Up to 1 at start of working day
+resource "google_cloud_scheduler_job" "scale_up" {
+  count       = var.enable_scheduler ? 1 : 0
+  name        = "${var.service_name}-scale-up"
+  description = "Scale Cloud Run manual instances to 1 at the start of the working day"
+  schedule    = var.scale_up_schedule
+  time_zone   = var.schedule_timezone
+  region      = var.region
+
+  http_target {
+    http_method = "PATCH"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
+    body = base64encode(jsonencode({
+      scaling = {
+        scalingMode         = "MANUAL"
+        manualInstanceCount = 1
+      }
+    }))
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler_sa[0].email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [
+    time_sleep.wait_for_apis,
+    google_cloud_run_v2_service_iam_member.scheduler_run_developer,
+    google_service_account_iam_member.scheduler_sa_user
+  ]
+}
+

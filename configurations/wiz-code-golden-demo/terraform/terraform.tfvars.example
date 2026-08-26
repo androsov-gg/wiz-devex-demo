@@ -1,7 +1,0 @@
-# Example Terraform variables configuration for Wiz Developer Experience Demos
-# Copy this file to terraform.auto.tfvars and customize for your GCP Argolis project:
-# cp terraform.tfvars.example terraform.auto.tfvars
-
-project_id  = "your-gcp-project-id"
-region      = "europe-west1" # Supported: europe-west1, us-east5, asia-southeast1
-iap_members = ["domain:yourname.altostrat.com"]

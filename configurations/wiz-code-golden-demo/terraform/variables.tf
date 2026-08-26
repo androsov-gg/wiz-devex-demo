@@ -29,3 +29,28 @@ variable "iap_members" {
   default     = ["domain:yourname.altostrat.com"]
   description = "List of IAM members (e.g. domain:yourname.altostrat.com, user:user@yourname.altostrat.com) allowed access via IAP."
 }
+
+variable "enable_scheduler" {
+  type        = bool
+  default     = true
+  description = "Enable Cloud Scheduler jobs for automated off-hours scale down to 0 and working-hours scale up to 1."
+}
+
+variable "schedule_timezone" {
+  type        = string
+  default     = "UTC"
+  description = "Timezone for Cloud Scheduler scaling jobs in IANA tz format (e.g. UTC, America/New_York, Europe/London, America/Los_Angeles)."
+}
+
+variable "scale_down_schedule" {
+  type        = string
+  default     = "0 19 * * 1-5"
+  description = "Cron schedule expression for scaling down min instances to 0 at the end of the working day (e.g., 19:00 / 7 PM Mon-Fri)."
+}
+
+variable "scale_up_schedule" {
+  type        = string
+  default     = "0 8 * * 1-5"
+  description = "Cron schedule expression for scaling up min instances to 1 at the start of the working day (e.g., 08:00 / 8 AM Mon-Fri)."
+}
+

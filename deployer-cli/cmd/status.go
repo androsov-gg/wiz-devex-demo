@@ -95,6 +95,10 @@ func runStatus(cmd *cobra.Command, args []string) {
 			if img, ok := outputs["custom_container_image_tag"]; ok {
 				ui.Detail("Container Image", img)
 			}
+			if sched, ok := outputs["scheduler_enabled"]; ok && sched == "true" {
+				tz := outputs["scheduler_schedule_timezone"]
+				ui.Detail("Scheduler", fmt.Sprintf("Enabled (Timezone: %s)", tz))
+			}
 			ui.Success("State: Provisioned via Terraform")
 		} else {
 			ui.Info("State: Not yet deployed locally or uninitialized")
