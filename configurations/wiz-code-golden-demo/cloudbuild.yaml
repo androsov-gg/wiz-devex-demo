@@ -2,8 +2,9 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     env:
       - 'DOCKER_BUILDKIT=1'
-    args: ['build', '-t', '$_IMAGE_TAG', '.']
+    args: ['build', '-t', '$_IMAGE_TAG', '-t', '$_IMAGE_LATEST_TAG', '.']
 images:
   - '$_IMAGE_TAG'
+  - '$_IMAGE_LATEST_TAG'
 options:
   logging: CLOUD_LOGGING_ONLY

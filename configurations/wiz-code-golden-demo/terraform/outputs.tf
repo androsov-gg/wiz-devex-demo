@@ -12,4 +12,3 @@ output "custom_container_image_tag" {
   description = "The fully-qualified container image URI built via Cloud Build and deployed to Cloud Run."
   value       = local.container_image
 }
-

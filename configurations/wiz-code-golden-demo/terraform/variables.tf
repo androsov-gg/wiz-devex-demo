@@ -18,6 +18,12 @@ variable "service_name" {
   description = "Name of the Cloud Run service."
 }
 
+variable "image_tag" {
+  type        = string
+  default     = "latest"
+  description = "Specific container image tag or content hash to deploy."
+}
+
 variable "iap_members" {
   type        = list(string)
   default     = ["domain:yourname.altostrat.com"]

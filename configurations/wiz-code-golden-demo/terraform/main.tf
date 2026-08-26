@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 5.30.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0"
+    }
   }
 
   backend "gcs" {
@@ -25,14 +29,17 @@ resource "google_project_service" "apis" {
   for_each = toset([
     "run.googleapis.com",
     "aiplatform.googleapis.com",
-    "storage.googleapis.com",
-    "iam.googleapis.com",
-    "cloudbuild.googleapis.com",
-    "artifactregistry.googleapis.com",
-    "iap.googleapis.com"
+    "iap.googleapis.com",
+    "iam.googleapis.com"
   ])
   service            = each.key
   disable_on_destroy = false
+}
+
+# Wait 30 seconds after API enablement to allow Google Cloud auth caches and Service Agents to stabilize
+resource "time_sleep" "wait_for_apis" {
+  depends_on      = [google_project_service.apis]
+  create_duration = "30s"
 }
 
 data "google_project" "project" {
@@ -47,7 +54,7 @@ data "google_project" "project" {
 resource "google_service_account" "cloud_run_sa" {
   account_id   = "code-server-runner-sa"
   display_name = "Cloud Run Code Server Runner SA"
-  depends_on   = [google_project_service.apis]
+  depends_on   = [time_sleep.wait_for_apis]
 }
 
 resource "google_project_iam_member" "cloud_run_ar_reader" {
@@ -73,7 +80,7 @@ resource "google_project_iam_member" "cloud_run_logging" {
 # ------------------------------------------------------------------------------
 
 locals {
-  container_image = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images/${var.service_name}:latest"
+  container_image = "${var.region}-docker.pkg.dev/${var.project_id}/wiz-devex-demo-images/${var.service_name}:${var.image_tag}"
 }
 
 # Cloud Run v2 Service with IAP Authentication & Always-On CPU
@@ -152,7 +159,7 @@ resource "google_cloud_run_v2_service" "code_server" {
   }
 
   depends_on = [
-    google_project_service.apis,
+    time_sleep.wait_for_apis,
     google_project_iam_member.cloud_run_ar_reader,
     google_project_iam_member.cloud_run_vertex_user,
     google_project_iam_member.cloud_run_logging
@@ -161,11 +168,12 @@ resource "google_cloud_run_v2_service" "code_server" {
 
 # Allow IAP Service Agent permission to invoke Cloud Run
 resource "google_cloud_run_v2_service_iam_member" "iap_invoker" {
-  project  = google_cloud_run_v2_service.code_server.project
-  location = google_cloud_run_v2_service.code_server.location
-  name     = google_cloud_run_v2_service.code_server.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  project    = google_cloud_run_v2_service.code_server.project
+  location   = google_cloud_run_v2_service.code_server.location
+  name       = google_cloud_run_v2_service.code_server.name
+  role       = "roles/run.invoker"
+  member     = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  depends_on = [time_sleep.wait_for_apis]
 }
 
 # Allow designated users access to code-server via IAP
@@ -176,4 +184,5 @@ resource "google_iap_web_cloud_run_service_iam_member" "user_access" {
   cloud_run_service_name = google_cloud_run_v2_service.code_server.name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = each.key
+  depends_on             = [time_sleep.wait_for_apis]
 }

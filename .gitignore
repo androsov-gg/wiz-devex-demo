@@ -1,2 +1,7 @@
-.terraform
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.backup
 terraform.auto.tfvars
+**/terraform.auto.tfvars
+bin/

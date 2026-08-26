@@ -1,0 +1,11 @@
+/*
+Copyright © 2026 NAME HERE <EMAIL ADDRESS>
+
+*/
+package main
+
+import "deployer-cli/cmd"
+
+func main() {
+	cmd.Execute()
+}

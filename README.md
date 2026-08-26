@@ -1,15 +1,15 @@
 # wiz-devex-demo
 
 ## 🎯 Project Goal
-The goal of this project is to provide a stable and extendable platform for Wiz CEs to demonstrate how the product can be integrated into a developer's environment, specifically focusing on use of agentic coding tools.
+The goal of this project is to provide a stable and extendable platform for Wiz CEs to demonstrate how the product can be integrated into a developer's environment, specifically focusing on the use of agentic coding tools.
 
-This repository provides a deployment of **code-server** running on **Google Cloud Run** secured by **Identity-Aware Proxy (IAP)**. This is designed specifically for Google Cloud Argolis (`altostrat.com`) environments.
+This repository provides an automated deployment of **code-server** running on **Google Cloud Run** secured by **Identity-Aware Proxy (IAP)**, designed specifically for Google Cloud Argolis (`altostrat.com`) environments.
 
 It deploys an IAP-secured Cloud Run service running a custom **code-server** container image (pre-installing Wiz CLI, Claude Code CLI, Wiz VS Code extension, and pre-packaged configurations) built prior to running Terraform without requiring a VPC network.
 
 ### Built-in Service Specifications
 * **Base Image**: `codercom/code-server:latest`
-* **Custom Image**: `${region}-docker.pkg.dev/${project_id}/wiz-devex-demo-images/wiz-code-golden-demo:latest` (built via Cloud Build)
+* **Custom Image**: `${region}-docker.pkg.dev/${project_id}/wiz-devex-demo-images/${scenario_name}:latest` (built via Cloud Build)
 * **Compute Resources**: 4 vCPU, 8 GB memory
 * **CPU Allocation**: Always allocated (`cpu_idle = false`) to maintain active WebSocket connections, integrated terminals, and background language servers.
 * **Instance Scaling**: 1 min instance, 1 max instance (always-on 1 service running)
@@ -17,36 +17,81 @@ It deploys an IAP-secured Cloud Run service running a custom **code-server** con
 
 ---
 
-## 🚀 Deployment Instructions
+## ⚡ Quickstart Deployment (Recommended)
 
-### 1. Prerequisites: Environment, Artifact Registry, SA & Image Build
-Before provisioning infrastructure with Terraform, configure your GCP project environment, enable required APIs, grant Model Garden access, create the Artifact Registry repository, configure the Cloud Build Service Account, and submit the container build.
+Once you clone this repository, you can deploy the complete demo environment with a single interactive command:
 
-> [!IMPORTANT]
-> The only supported regions are europe-west1, us-east5 or asia-southeast1.
+```bash
+make deploy
+```
+*(Alternatively, run `cd deployer-cli && go run . deploy` or `./bin/deployer deploy`)*
 
-1. **Setup project / region environment variables & configure `gcloud`**:
-   ```bash
-   export PROJECT_ID="your-argolis-project-id"
-   export REGION="your-region1"
+### What the Deployer CLI does automatically:
+1. **Pre-flight Health Checks**: Verifies `gcloud`, `terraform`, `git`, and active GCP authentication.
+2. **Scenario Selection**: Discovers demo scenarios in `configurations/` and lets you select which scenario to deploy.
+3. **Auto-Configuration**: Discovers active GCP project/account and prompts for confirmation with smart defaults.
+4. **Cloud Prerequisites**: Automatically enables required APIs, sets up Artifact Registry, configures Cloud Build builder Service Account & IAM permissions.
+5. **Container Build**: Submits the container build to Cloud Build and pushes to Artifact Registry.
+6. **Terraform Provisioning**: Sets up remote state and interactively plans and applies infrastructure.
+7. **Demo Guide**: Prints the live IAP Cloud Run URL and demo instructions.
 
-   gcloud config set project "${PROJECT_ID}"
-   ```
+---
 
-2. **Enable required GCP APIs**:
-   ```bash
-   gcloud services enable \
-     run.googleapis.com \
-     aiplatform.googleapis.com \
-     storage.googleapis.com \
-     iam.googleapis.com \
-     cloudbuild.googleapis.com \
-     artifactregistry.googleapis.com \
-     iap.googleapis.com
-   ```
+## 🛠️ Additional CLI Commands
 
-3. **Enable Claude Sonnet 4.6 in Agent Platform Model Garden**:
-   In the Argolis project that you are going to deploy this demo in, enable **Claude Sonnet 4.6** in **Agent Platform Model Garden**. Supply the following details:
+The repository provides handy shortcuts via `make`:
+
+```bash
+# Check prerequisites and Model Garden checklist
+make doctor
+
+# Inspect deployed Cloud Run service status and live URLs
+make status
+
+# Rebuild and push container images without re-running Terraform
+make build-image
+
+# Interactively teardown a deployed scenario
+make destroy
+```
+
+---
+
+## 📂 Multi-Scenario Architecture
+
+Demo scenarios are modular and self-contained under `configurations/`:
+
+```
+configurations/
+├── wiz-code-golden-demo/          # Golden demo scenario
+│   ├── Dockerfile
+│   ├── cloudbuild.yaml
+│   ├── entrypoint.sh
+│   ├── claude-code/
+│   │   ├── CLAUDE.md
+│   │   └── settings.json
+│   └── terraform/                 # Scenario-specific Terraform configuration
+│       ├── main.tf
+│       ├── variables.tf
+│       └── outputs.tf
+│
+└── <future-scenario>/             # Drop new scenario folders here
+    ├── Dockerfile
+    ├── cloudbuild.yaml
+    └── terraform/
+```
+
+- Each scenario has its own independent Terraform definition and container configuration.
+- Scenarios share the same remote state bucket (`${PROJECT_ID}-wiz-devex-demo-tf-state`). For backward compatibility with existing deployments, `wiz-code-golden-demo` uses the root state path, while subsequent scenarios specify `prefix = "scenarios/<scenario-name>"`.
+
+---
+
+## 📋 One-Time Prerequisite: Claude Sonnet 4.6 on Vertex AI Model Garden
+
+In the Argolis project where you are deploying this demo, enable **Claude Sonnet 4.6** in **Vertex AI Model Garden**:
+1. Open [Vertex AI Model Garden](https://console.cloud.google.com/vertex-ai/model-garden).
+2. Search for **Claude Sonnet 4.6** (Anthropic).
+3. Click **Enable / Accept Agreement** with these standard Argolis values:
    - **Business name**: `Google LLC`
    - **Business website**: `https://www.google.com`
    - **Contact email address**: `yourname@google.com`
@@ -54,106 +99,3 @@ Before provisioning infrastructure with Terraform, configure your GCP project en
    - **Industry**: `Telecommunications`
    - **Intended users**: `Internal employees`
    - **Intended use cases**: `"Customer demonstrations"`
-
-4. **Create Artifact Registry Repository**:
-   ```bash
-   gcloud artifacts repositories create wiz-devex-demo-images \
-     --repository-format=docker \
-     --location="${REGION}" \
-     --description="Docker repository for code-server Cloud Run images"
-   ```
-
-5. **Set Up Service Account for Cloud Build**:
-   ```bash
-   # Create Dedicated Builder Service Account
-   gcloud iam service-accounts create cloudbuild-builder-sa \
-     --display-name="Cloud Build Dedicated Builder SA"
-   ```
-
-   Wait 60 seconds before running the policy bindings, to allow the SA to stabilise.
-   ```bash
-   # Grant required IAM roles to the Dedicated Builder Service Account
-   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-     --role="roles/storage.admin"
-
-   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-     --role="roles/storage.objectAdmin"
-
-   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-     --role="roles/artifactregistry.writer"
-
-   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-     --member="serviceAccount:cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-     --role="roles/logging.logWriter"
-
-   # Allow Cloud Build Service Agent to act as the dedicated builder SA
-   PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
-
-   gcloud iam service-accounts add-iam-policy-binding \
-     cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com \
-     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudbuild.iam.gserviceaccount.com" \
-     --role="roles/iam.serviceAccountUser"
-
-   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-cloudbuild.iam.gserviceaccount.com" \
-     --role="roles/storage.objectAdmin"
-   ```
-
-6. **Build & Push Container Image**:
-   ```bash
-   export IMAGE_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/wiz-devex-demo-images/wiz-code-golden-demo:latest"
-
-   gcloud builds submit \
-     --project="${PROJECT_ID}" \
-     --region="${REGION}" \
-     --service-account="projects/${PROJECT_ID}/serviceAccounts/cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-     --config="configurations/wiz-code-golden-demo/cloudbuild.yaml" \
-     --substitutions=_IMAGE_TAG="${IMAGE_TAG}" \
-     configurations/wiz-code-golden-demo
-   ```
-
-### 2. Configure Variables & Initialize Remote State
-Copy `terraform.tfvars.example` to `terraform.auto.tfvars`, set your GCP `project_id` and `region`, create the state bucket (`${PROJECT_ID}-wiz-devex-demo-tf-state`), and initialize Terraform:
-
-```bash
-cp terraform.tfvars.example terraform.auto.tfvars
-# Edit project_id, region, and the allowed domains in terraform.auto.tfvars
-
-export STATE_BUCKET="${PROJECT_ID}-wiz-devex-demo-tf-state"
-
-gcloud storage buckets create "gs://${STATE_BUCKET}" --location="${REGION}" --uniform-bucket-level-access
-
-terraform init -backend-config="bucket=${STATE_BUCKET}"
-```
-
-### 3. Apply Terraform Configuration
-Deploy the Cloud Run service secured with IAP using the pre-built container image:
-
-```bash
-terraform apply
-```
-
-### 4. Accessing code-server
-Once Terraform completes:
-1. Copy the outputted `cloud_run_service_url` (`https://wiz-code-golden-demo-xxxxx-xx.a.run.app`).
-2. Open the URL in your browser. Google IAP will authenticate your Argolis account before granting access to code-server with all pre-loaded Wiz tools and repositories ready!
-
----
-
-## 🧹 Teardown Instructions
-
-To clean up Cloud Run services and IAM bindings provisioned by Terraform:
-
-```bash
-terraform destroy
-```
-
-Note: Pre-requisite resources created outside Terraform (such as the Artifact Registry repository and Cloud Build Service Account) can be deleted separately if desired using:
-```bash
-gcloud artifacts repositories delete wiz-devex-demo-images --location="${REGION}" --quiet
-gcloud iam service-accounts delete "cloudbuild-builder-sa@${PROJECT_ID}.iam.gserviceaccount.com" --quiet
-```
-
