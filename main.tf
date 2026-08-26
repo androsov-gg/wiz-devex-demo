@@ -137,12 +137,8 @@ resource "google_cloud_run_v2_service" "code_server" {
         value = var.project_id
       }
       env {
-        name  = "ANTHROPIC_VERTEX_LOCATION"
-        value = var.region
-      }
-      env {
         name  = "CLOUD_ML_REGION"
-        value = var.region
+        value = "global"
       }
       env {
         name  = "ANTHROPIC_MODEL"
