@@ -57,6 +57,12 @@ func runDestroy(cmd *cobra.Command, args []string) {
 		os.Exit(0)
 	}
 
+	// Ensure Terraform backend is initialized with remote GCS state bucket before destroy
+	stateBucket := gcp.ResolveStateBucket(project)
+	if err := terraform.Init(selectedScenario.TerraformDir, stateBucket, selectedScenario.StatePrefix, flagVerbose); err != nil {
+		ui.Warning(fmt.Sprintf("Terraform initialization notice: %v", err))
+	}
+
 	// Run Terraform Destroy
 	if err := terraform.Destroy(selectedScenario.TerraformDir, flagVerbose); err != nil {
 		ui.Error(fmt.Sprintf("Terraform destroy failed: %v", err))

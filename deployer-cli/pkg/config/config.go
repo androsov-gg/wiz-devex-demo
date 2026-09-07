@@ -13,7 +13,7 @@ import (
 	"deployer-cli/pkg/ui"
 )
 
-// SupportedRegions defines the list of Google Cloud regions allowed for Vertex AI / Claude Sonnet 4.6 & Cloud Run setup.
+// SupportedRegions defines the list of Google Cloud regions allowed for Agent Platform / Claude Sonnet 4.6 & Cloud Run setup.
 var SupportedRegions = []string{
 	"europe-west1",
 	"us-east5",
@@ -48,7 +48,6 @@ type TFVarsData struct {
 	ScaleDownSchedule string
 	ScaleUpSchedule   string
 }
-
 
 // ValidateRegion verifies if the provided region is in the supported list.
 func ValidateRegion(region string) error {
@@ -170,6 +169,69 @@ func ResolveDeploymentConfig(
 	detectedProject, detectedAccount, _ := DetectGCPDefaults()
 	existing := ReadExistingFullTFVars(selectedScenario.TerraformDir)
 
+	// Fast-Path: If complete configuration exists and no overriding flags were supplied, offer 1-click reuse
+	hasExistingConfig := existing.ProjectID != "" && existing.Region != "" && len(existing.IAPMembers) > 0
+	noOverrideFlags := flagProj == "" && (flagReg == "" || flagReg == "europe-west1") && flagIAP == "" && flagEnableSched == ""
+
+	if interactive && hasExistingConfig && noOverrideFlags {
+		ui.SectionHeader(fmt.Sprintf("Existing Configuration Found (%s)", selectedScenario.Name))
+		ui.Detail("GCP Project", existing.ProjectID)
+		ui.Detail("GCP Region", existing.Region)
+		ui.Detail("IAP Member", existing.IAPMembers[0])
+		schedDesc := "Disabled (Always 1 min instance)"
+		if existing.EnableScheduler == nil || *existing.EnableScheduler {
+			tz := existing.ScheduleTimezone
+			if tz == "" {
+				tz = "UTC"
+			}
+			schedDesc = fmt.Sprintf("Enabled (%s to %s, %s)", existing.ScaleUpSchedule, existing.ScaleDownSchedule, tz)
+		}
+		ui.Detail("Off-Hours Scaling", schedDesc)
+
+		if ui.PromptConfirm("Reuse this existing configuration?", true) {
+			enableSched := true
+			if existing.EnableScheduler != nil {
+				enableSched = *existing.EnableScheduler
+			}
+			schedTimezone := "UTC"
+			if existing.ScheduleTimezone != "" {
+				schedTimezone = existing.ScheduleTimezone
+			}
+			scaleUpSched := "0 8 * * 1-5"
+			if existing.ScaleUpSchedule != "" {
+				scaleUpSched = existing.ScaleUpSchedule
+			}
+			scaleDownSched := "0 19 * * 1-5"
+			if existing.ScaleDownSchedule != "" {
+				scaleDownSched = existing.ScaleDownSchedule
+			}
+
+			contentHash, err := scenario.ComputeContentHash(selectedScenario.Dir)
+			if err != nil || contentHash == "" {
+				contentHash = "latest"
+			}
+
+			stateBucket := gcp.ResolveStateBucket(existing.ProjectID)
+			imageTag := fmt.Sprintf("%s-docker.pkg.dev/%s/wiz-devex-demo-images/%s:%s", existing.Region, existing.ProjectID, selectedScenario.Name, contentHash)
+			latestTag := fmt.Sprintf("%s-docker.pkg.dev/%s/wiz-devex-demo-images/%s:latest", existing.Region, existing.ProjectID, selectedScenario.Name)
+
+			return &DeployConfig{
+				ProjectID:         existing.ProjectID,
+				Region:            existing.Region,
+				ImageTag:          contentHash,
+				FullImageTag:      imageTag,
+				FullLatestTag:     latestTag,
+				StateBucket:       stateBucket,
+				IAPMembers:        existing.IAPMembers,
+				Scenario:          selectedScenario,
+				EnableScheduler:   enableSched,
+				ScheduleTimezone:  schedTimezone,
+				ScaleDownSchedule: scaleDownSched,
+				ScaleUpSchedule:   scaleUpSched,
+			}, nil
+		}
+	}
+
 	// 1. Resolve Project ID (Priority: CLI flag > Existing tfvars > Detected gcloud project)
 	targetProject := flagProj
 	if targetProject == "" {
@@ -231,45 +293,52 @@ func ResolveDeploymentConfig(
 
 	// 4. Resolve Cloud Scheduler settings (Off-hours scaling: scale down to 0 at end of working day, back up to 1 at start of day)
 	enableSched := true
-	if existing.EnableScheduler != nil {
-		enableSched = *existing.EnableScheduler
-	}
-	if flagEnableSched != "" {
-		enableSched = (strings.ToLower(flagEnableSched) == "true" || flagEnableSched == "1")
-	} else if interactive {
-		enableSched = ui.PromptConfirm("Enable automated off-hours scaling with Cloud Scheduler (0 min instances off-hours, 1 min instance working hours)?", enableSched)
-	}
-
 	schedTimezone := "UTC"
 	if existing.ScheduleTimezone != "" {
 		schedTimezone = existing.ScheduleTimezone
 	}
-	if flagSchedTZ != "" {
-		schedTimezone = flagSchedTZ
-	} else if interactive && enableSched {
-		schedTimezone = ui.PromptString("Schedule Timezone (IANA format, e.g. America/New_York, Europe/London, America/Los_Angeles, UTC)", schedTimezone)
-	}
-
 	scaleUpSched := "0 8 * * 1-5"
 	if existing.ScaleUpSchedule != "" {
 		scaleUpSched = existing.ScaleUpSchedule
 	}
-	if flagScaleUp != "" {
-		scaleUpSched = NormalizeScheduleCron(flagScaleUp, "0 8 * * 1-5")
-	} else if interactive && enableSched {
-		rawUp := ui.PromptString("Working day start time (scale up to 1 instance) [Mon-Fri] (e.g. 08:00, 8am, or cron '0 8 * * 1-5')", "08:00")
-		scaleUpSched = NormalizeScheduleCron(rawUp, "0 8 * * 1-5")
-	}
-
 	scaleDownSched := "0 19 * * 1-5"
 	if existing.ScaleDownSchedule != "" {
 		scaleDownSched = existing.ScaleDownSchedule
 	}
-	if flagScaleDown != "" {
-		scaleDownSched = NormalizeScheduleCron(flagScaleDown, "0 19 * * 1-5")
-	} else if interactive && enableSched {
-		rawDown := ui.PromptString("Working day end time (scale down to 0 instances) [Mon-Fri] (e.g. 19:00, 7pm, or cron '0 19 * * 1-5')", "19:00")
-		scaleDownSched = NormalizeScheduleCron(rawDown, "0 19 * * 1-5")
+
+	if flagEnableSched != "" {
+		enableSched = (strings.ToLower(flagEnableSched) == "true" || flagEnableSched == "1")
+		if flagSchedTZ != "" {
+			schedTimezone = flagSchedTZ
+		}
+		if flagScaleUp != "" {
+			scaleUpSched = NormalizeScheduleCron(flagScaleUp, "0 8 * * 1-5")
+		}
+		if flagScaleDown != "" {
+			scaleDownSched = NormalizeScheduleCron(flagScaleDown, "0 19 * * 1-5")
+		}
+	} else if interactive {
+		schedOptions := []string{
+			fmt.Sprintf("Standard Off-Hours Scaling (0 min instances off-hours, 1 min instance 08:00-19:00 Mon-Fri, %s)", schedTimezone),
+			"Custom Hours & Timezone",
+			"Disabled (Always keep 1 min instance running 24/7)",
+		}
+		chosen := ui.PromptChoice("Cloud Scheduler Off-Hours Cost Optimization", schedOptions, 0)
+		switch chosen {
+		case schedOptions[0]:
+			enableSched = true
+			scaleUpSched = "0 8 * * 1-5"
+			scaleDownSched = "0 19 * * 1-5"
+		case schedOptions[1]:
+			enableSched = true
+			schedTimezone = ui.PromptString("Schedule Timezone (IANA format, e.g. America/New_York, Europe/London, America/Los_Angeles, UTC)", schedTimezone)
+			rawUp := ui.PromptString("Working day start time (scale up to 1 instance) [Mon-Fri] (e.g. 08:00, 8am, or cron '0 8 * * 1-5')", "08:00")
+			scaleUpSched = NormalizeScheduleCron(rawUp, "0 8 * * 1-5")
+			rawDown := ui.PromptString("Working day end time (scale down to 0 instances) [Mon-Fri] (e.g. 19:00, 7pm, or cron '0 19 * * 1-5')", "19:00")
+			scaleDownSched = NormalizeScheduleCron(rawDown, "0 19 * * 1-5")
+		case schedOptions[2]:
+			enableSched = false
+		}
 	}
 
 	// 5. Compute Content Hash Fingerprint
@@ -437,4 +506,3 @@ func extractQuotedString(line string) string {
 	}
 	return line[first+1 : last]
 }
-

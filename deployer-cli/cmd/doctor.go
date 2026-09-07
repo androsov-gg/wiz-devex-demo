@@ -12,7 +12,7 @@ import (
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Check deployment prerequisites and GCP environment health",
-	Long:  `Validates local dependencies (gcloud, terraform, git), Google Cloud authentication, project permissions, and displays Vertex AI Model Garden checklist.`,
+	Long:  `Validates local dependencies (gcloud, terraform, git), Google Cloud authentication, project permissions, and displays Agent Platform Model Garden checklist.`,
 	Run:   runDoctor,
 }
 

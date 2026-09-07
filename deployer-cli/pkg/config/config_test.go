@@ -133,4 +133,3 @@ func TestWriteAndReadTFVars(t *testing.T) {
 		t.Errorf("expected scale_up_schedule '0 8 * * 1-5', got %s", full.ScaleUpSchedule)
 	}
 }
-

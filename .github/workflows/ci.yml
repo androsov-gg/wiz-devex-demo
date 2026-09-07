@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 concurrency:
-  group: Create Repo on Approve-refs/heads/main
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -16,5 +16,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Build & Test
-        run: echo "Repository initialized with 15m timeout and concurrency cancellation guardrails."
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'deployer-cli/go.mod'
+          cache-dependency-path: 'deployer-cli/go.sum'
+
+      - name: Run Tests
+        run: |
+          cd deployer-cli
+          go test -v ./...
+
+      - name: Verify CLI Build
+        run: |
+          make build-cli

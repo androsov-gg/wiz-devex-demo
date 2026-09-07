@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"deployer-cli/pkg/config"
 	"deployer-cli/pkg/doctor"
@@ -34,8 +35,26 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 1. Doctor pre-flight check
-	results, allPassed := doctor.RunDiagnostics(flagProject)
+	// 1. Discover & Select Scenario
+	selectedScenario, err := scenario.ResolveScenario(repoRoot, flagScenario, "Select Demo Scenario to deploy")
+	if err != nil {
+		ui.Error(fmt.Sprintf("Scenario selection error: %v", err))
+		os.Exit(1)
+	}
+
+	// 2. Resolve Target Project for Pre-Flight Diagnostics
+	targetProject := flagProject
+	if targetProject == "" {
+		pID, _, _, _, _ := config.ReadExistingTFVars(selectedScenario.TerraformDir)
+		targetProject = pID
+	}
+	if targetProject == "" {
+		p, _, _ := config.DetectGCPDefaults()
+		targetProject = p
+	}
+
+	// 3. Doctor pre-flight check
+	results, allPassed := doctor.RunDiagnostics(targetProject)
 	doctor.PrintDiagnostics(results)
 	if !allPassed {
 		if !ui.PromptConfirm("Some pre-flight checks had warnings or failures. Do you still want to proceed?", false) {
@@ -44,14 +63,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// 2. Discover & Select Scenario
-	selectedScenario, err := scenario.ResolveScenario(repoRoot, flagScenario, "Select Demo Scenario to deploy")
-	if err != nil {
-		ui.Error(fmt.Sprintf("Scenario selection error: %v", err))
-		os.Exit(1)
-	}
-
-	// 3. Resolve & Confirm Deployment Configuration
+	// 4. Resolve & Confirm Deployment Configuration
 	cfg, err := config.ResolveDeploymentConfig(
 		selectedScenario,
 		flagProject,
@@ -86,7 +98,6 @@ func runDeploy(cmd *cobra.Command, args []string) {
 	} else {
 		ui.Detail("Off-Hours Scaling", "Disabled (Always 1 min instance)")
 	}
-
 
 	if !ui.PromptConfirm("Proceed with deployment?", true) {
 		ui.Info("Deployment cancelled by user.")
@@ -162,11 +173,19 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 5. Outputs & Success Summary
+	// 5. Outputs & Readiness Verification
 	outputs, err := terraform.GetOutputs(selectedScenario.TerraformDir)
 	serviceURL := "https://console.cloud.google.com/run"
 	if err == nil && outputs["cloud_run_service_url"] != "" {
 		serviceURL = outputs["cloud_run_service_url"]
+	}
+
+	ui.Info("Verifying Cloud Run service instance health...")
+	if gcp.WaitForServiceReady(cfg.ProjectID, cfg.Region, selectedScenario.Name, 45*time.Second) {
+		ui.Success("Cloud Run service is healthy and ready to serve traffic")
+	} else {
+		ui.Warning("Cloud Run service is still starting up or taking longer than expected to report Ready.")
+		ui.Info("The service will become available shortly. Check Google Cloud Run console if issues persist.")
 	}
 
 	ui.PrintDeploymentSummary(serviceURL, cfg.ProjectID, cfg.Region, selectedScenario.Name, cfg.FullImageTag)

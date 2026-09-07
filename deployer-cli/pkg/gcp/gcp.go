@@ -29,6 +29,9 @@ var RequiredAPIs = []string{
 	"storage.googleapis.com",
 	"iam.googleapis.com",
 	"cloudscheduler.googleapis.com",
+	"run.googleapis.com",
+	"iap.googleapis.com",
+	"aiplatform.googleapis.com",
 }
 
 // CloudRunServiceInfo holds summary details about a deployed Cloud Run service.
@@ -54,22 +57,55 @@ func EnsurePrerequisites(project, region string, verbose bool) error {
 	return nil
 }
 
-// EnableAPIs enables the required Google Cloud APIs idempotently using Service Usage SDK.
-func EnableAPIs(project string, apis []string, verbose bool) error {
-	ctx := context.Background()
-	ui.Info("Enabling required GCP APIs via Service Usage API...")
+// getDisabledAPIs checks which of the requested APIs are not yet enabled in the project.
+func getDisabledAPIs(project string, apis []string) []string {
+	cmd := exec.Command("gcloud", "services", "list", "--enabled", "--project", project, "--format=value(config.name)")
+	out, err := cmd.Output()
+	if err != nil {
+		return apis
+	}
 
+	enabled := make(map[string]bool)
+	lines := strings.Split(string(out), "\n")
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" {
+			enabled[trimmed] = true
+		}
+	}
+
+	var missing []string
+	for _, api := range apis {
+		if !enabled[api] {
+			missing = append(missing, api)
+		}
+	}
+	return missing
+}
+
+// EnableAPIs enables the required Google Cloud APIs idempotently using Service Usage SDK.
+// It checks existing enabled services first and returns immediately if all APIs are already active.
+func EnableAPIs(project string, apis []string, verbose bool) error {
+	missing := getDisabledAPIs(project, apis)
+	if len(missing) == 0 {
+		ui.Success("All required Google Cloud APIs are already enabled")
+		return nil
+	}
+
+	ui.Info(fmt.Sprintf("Enabling %d required Google Cloud APIs (%s)...", len(missing), strings.Join(missing, ", ")))
+
+	ctx := context.Background()
 	suService, err := serviceusage.NewService(ctx)
 	if err != nil {
-		return enableAPIsGcloud(project, apis, verbose)
+		return enableAPIsGcloud(project, missing, verbose)
 	}
 
 	req := &serviceusage.BatchEnableServicesRequest{
-		ServiceIds: apis,
+		ServiceIds: missing,
 	}
 	op, err := suService.Services.BatchEnable(fmt.Sprintf("projects/%s", project), req).Do()
 	if err != nil {
-		return enableAPIsGcloud(project, apis, verbose)
+		return enableAPIsGcloud(project, missing, verbose)
 	}
 
 	for !op.Done {
@@ -560,4 +596,44 @@ func DeleteBuilderServiceAccount(project string) error {
 		"--quiet",
 	}
 	return exec.Command("gcloud", args...).Run()
+}
+
+// WaitForServiceReady polls Cloud Run service status until it reports Ready or times out.
+func WaitForServiceReady(project, region, serviceName string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	ctx := context.Background()
+
+	client, err := run.NewServicesClient(ctx)
+	if client != nil {
+		defer client.Close()
+	}
+	fullName := fmt.Sprintf("projects/%s/locations/%s/services/%s", project, region, serviceName)
+
+	for time.Now().Before(deadline) {
+		if err == nil {
+			req := &runpb.GetServiceRequest{Name: fullName}
+			resp, getErr := client.GetService(ctx, req)
+			if getErr == nil && resp.Conditions != nil {
+				for _, cond := range resp.Conditions {
+					if cond.Type == "Ready" && cond.State == runpb.Condition_CONDITION_SUCCEEDED {
+						return true
+					}
+				}
+			}
+		} else {
+			// Fallback via gcloud CLI
+			checkCmd := exec.Command("gcloud", "run", "services", "describe", serviceName,
+				"--project", project, "--region", region, "--format=value(status.conditions.filter(type:Ready).status)")
+			if out, cmdErr := checkCmd.Output(); cmdErr == nil {
+				val := strings.TrimSpace(string(out))
+				if strings.EqualFold(val, "True") {
+					return true
+				}
+			}
+		}
+
+		time.Sleep(3 * time.Second)
+	}
+
+	return false
 }

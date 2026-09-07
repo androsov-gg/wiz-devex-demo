@@ -168,8 +168,8 @@ func PromptConfirm(prompt string, defaultYes bool) bool {
 // PrintModelGardenInstructions prints the helpful Argolis Model Garden walkthrough.
 func PrintModelGardenInstructions(projectID string) {
 	consoleURL := fmt.Sprintf("https://console.cloud.google.com/vertex-ai/model-garden?project=%s", projectID)
-	fmt.Printf("\n%s%s📋 Prerequisite: Claude Sonnet 4.6 on Vertex AI Model Garden%s\n", Yellow, Bold, Reset)
-	fmt.Printf("  Argolis projects require one-time approval in Model Garden before Vertex AI can invoke Claude:\n")
+	fmt.Printf("\n%s%s📋 Prerequisite: Claude Sonnet 4.6 on Agent Platform Model Garden%s\n", Yellow, Bold, Reset)
+	fmt.Printf("  Argolis projects require one-time approval in Model Garden before Agent Platform can invoke Claude:\n")
 	fmt.Printf("  %s1. Open URL:%s %s%s%s\n", Bold, Reset, Cyan, consoleURL, Reset)
 	fmt.Printf("  %s2. Search for:%s \"Claude Sonnet 4.6\" (Anthropic)\n", Bold, Reset)
 	fmt.Printf("  %s3. Click \"Enable\" / \"Accept Agreement\" with these Argolis values:%s\n", Bold, Reset)
