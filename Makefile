@@ -1,4 +1,4 @@
-.PHONY: help deploy destroy doctor status build-image build-cli test clean
+.PHONY: help deploy destroy doctor status build-image build-cli test vuln-check clean
 
 help:
 	@echo "Wiz Developer Experience Demo (Google Cloud Argolis) Deployer"
@@ -11,6 +11,7 @@ help:
 	@echo "  make build-image  - Build and push container image via Cloud Build"
 	@echo "  make build-cli    - Compile deployer binary to bin/deployer"
 	@echo "  make test         - Run CLI unit tests"
+	@echo "  make vuln-check   - Run Go vulnerability check (govulncheck)"
 	@echo "  make clean        - Clean up compiled binaries"
 	@echo ""
 
@@ -35,6 +36,9 @@ build-cli:
 
 test:
 	cd deployer-cli && go test -v ./...
+
+vuln-check:
+	cd deployer-cli && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 clean:
 	rm -rf bin/
