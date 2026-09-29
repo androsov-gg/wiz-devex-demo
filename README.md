@@ -41,9 +41,9 @@ make deploy
 *(Alternatively: `cd deployer-cli && go run . deploy`)*
 
 ### What the Deployer does:
-1. **Pre-flight Health Checks**: Verifies `gcloud`, `terraform` (>= 1.3.0), `git`, active `gcloud` auth, and Application Default Credentials (`ADC`).
-2. **Interactive Configuration**: Prompts for your target GCP project ID (auto-detecting your active `gcloud` project if available) and suggests smart defaults for region and IAP access.
+1. **Interactive Configuration**: Prompts for scenario selection, your target GCP project ID (auto-detecting your active `gcloud` project if available), and suggests smart defaults for region and IAP access.
    - *Repeat deployments*: Automatically detects existing configuration and offers instant 1-click reuse!
+2. **Pre-flight Health Checks**: Verifies `gcloud`, `terraform` (>= 1.3.0), `git`, active `gcloud` auth, Application Default Credentials (`ADC`), and access to your chosen GCP project.
 3. **Cloud Prerequisites**: Enables required Google Cloud APIs idempotently, prepares Artifact Registry, and configures the Cloud Build builder service account.
 4. **Container Build**: Builds and pushes the scenario container image via Cloud Build (skips rebuild if configuration hasn't changed).
 5. **Terraform Provisioning**: Sets up remote state in GCS and provisions the IAP-secured Cloud Run service.
