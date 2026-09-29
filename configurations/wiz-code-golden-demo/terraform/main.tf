@@ -25,6 +25,13 @@ provider "google" {
   region  = var.region
 }
 
+# Provider alias for Cloud Scheduler to ensure jobs are always deployed in us-west1
+provider "google" {
+  alias   = "scheduler"
+  project = var.project_id
+  region  = "us-west1"
+}
+
 resource "google_project_service" "apis" {
   for_each = toset([
     "run.googleapis.com",
@@ -228,16 +235,17 @@ resource "google_service_account_iam_member" "scheduler_sa_user" {
 
 # Cloud Scheduler Job: Scale Down to 0 at end of working day
 resource "google_cloud_scheduler_job" "scale_down" {
+  provider    = google.scheduler
   count       = var.enable_scheduler ? 1 : 0
   name        = "${var.service_name}-scale-down"
   description = "Scale Cloud Run manual instances to 0 at the end of the working day"
   schedule    = var.scale_down_schedule
   time_zone   = var.schedule_timezone
-  region      = var.region
+  region      = "us-west1"
 
   http_target {
     http_method = "PATCH"
-    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${google_cloud_run_v2_service.code_server.location}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
     body = base64encode(jsonencode({
       scaling = {
         scalingMode         = "MANUAL"
@@ -263,16 +271,17 @@ resource "google_cloud_scheduler_job" "scale_down" {
 
 # Cloud Scheduler Job: Scale Up to 1 at start of working day
 resource "google_cloud_scheduler_job" "scale_up" {
+  provider    = google.scheduler
   count       = var.enable_scheduler ? 1 : 0
   name        = "${var.service_name}-scale-up"
   description = "Scale Cloud Run manual instances to 1 at the start of the working day"
   schedule    = var.scale_up_schedule
   time_zone   = var.schedule_timezone
-  region      = var.region
+  region      = "us-west1"
 
   http_target {
     http_method = "PATCH"
-    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${google_cloud_run_v2_service.code_server.location}/services/${google_cloud_run_v2_service.code_server.name}?updateMask=scaling.manual_instance_count,scaling.scaling_mode"
     body = base64encode(jsonencode({
       scaling = {
         scalingMode         = "MANUAL"
