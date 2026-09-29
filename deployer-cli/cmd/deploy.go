@@ -42,28 +42,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 2. Resolve Target Project for Pre-Flight Diagnostics
-	targetProject := flagProject
-	if targetProject == "" {
-		pID, _, _, _, _ := config.ReadExistingTFVars(selectedScenario.TerraformDir)
-		targetProject = pID
-	}
-	if targetProject == "" {
-		p, _, _ := config.DetectGCPDefaults()
-		targetProject = p
-	}
-
-	// 3. Doctor pre-flight check
-	results, allPassed := doctor.RunDiagnostics(targetProject)
-	doctor.PrintDiagnostics(results)
-	if !allPassed {
-		if !ui.PromptConfirm("Some pre-flight checks had warnings or failures. Do you still want to proceed?", false) {
-			ui.Info("Deployment aborted. Please fix the items above and try again.")
-			os.Exit(1)
-		}
-	}
-
-	// 4. Resolve & Confirm Deployment Configuration
+	// 2. Resolve Deployment Configuration
 	cfg, err := config.ResolveDeploymentConfig(
 		selectedScenario,
 		flagProject,
@@ -80,6 +59,17 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	// 3. Doctor pre-flight check
+	results, allPassed := doctor.RunDiagnostics(cfg.ProjectID)
+	doctor.PrintDiagnostics(results)
+	if !allPassed {
+		if !ui.PromptConfirm("Some pre-flight checks had warnings or failures. Do you still want to proceed?", false) {
+			ui.Info("Deployment aborted. Please fix the items above and try again.")
+			os.Exit(1)
+		}
+	}
+
+	// 4. Review & Confirm Deployment Configuration
 	ui.SectionHeader("Deployment Configuration Review")
 	ui.Detail("Scenario", cfg.Scenario.Name)
 	ui.Detail("GCP Project", cfg.ProjectID)
@@ -110,7 +100,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 	}
 	ui.Success("Configured terraform.auto.tfvars")
 
-	// 4. GCP Automation Pipeline (4 concise steps)
+	// 5. GCP Automation Pipeline (4 concise steps)
 	totalSteps := 4
 
 	// Step 1: Base GCP prerequisites (APIs, AR repo, Builder SA)
@@ -173,7 +163,7 @@ func runDeploy(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 5. Outputs & Readiness Verification
+	// 6. Outputs & Readiness Verification
 	outputs, err := terraform.GetOutputs(selectedScenario.TerraformDir)
 	serviceURL := "https://console.cloud.google.com/run"
 	if err == nil && outputs["cloud_run_service_url"] != "" {
